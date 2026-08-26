@@ -54,12 +54,20 @@ feilian-cli --version
 
 ## 更新日志 / Changelog
 
+### 1.0.5 — 2026-08-26
+
+- 修复服务端 DNS 被按地址类型错误过滤的问题：主 DNS、备用 DNS 和中央 DNAT DNS 只要由服务端下发且地址有效，都会用于内网域名解析。
+- 即使服务端 DNS 看起来是公网地址，也会为其加入 `/32` 或 `/128` WireGuard 路由并只通过飞连 netstack 查询；不会回退到主机或系统 DNS。
+
+- Fixed an address-classification bug that excluded server-provided DNS resolvers. Valid primary, backup, and central DNAT DNS addresses are now all eligible for private-domain resolution.
+- Even when a server-provided resolver has a public-looking address, it receives a `/32` or `/128` WireGuard route and is queried only through the Feilian netstack, with no host or system DNS fallback.
+
 ### 1.0.4 — 2026-08-26
 
-- 修复 SOCKS5/netstack 内网域名解析：保留服务端动态域名记录并自动加入隧道路由；企业域名只使用动态记录或服务端内网解析器，不再回退到 `8.8.8.8` 等公网 DNS。
+- 修复 SOCKS5/netstack 内网域名解析：保留服务端动态域名记录并自动加入隧道路由；企业域名只使用动态记录或服务端解析器，不回退到主机或系统 DNS。
 - DNS 与 WireGuard/netstack 状态可在自动恢复时原地刷新，不替换现有 SOCKS5 监听器；没有可用内网解析路径时会安全失败。
 
-- Fixed private-domain resolution in SOCKS5/netstack mode. Server-provided dynamic records are retained and routed through the tunnel; enterprise domains use only those records or an internal resolver, never a public fallback such as `8.8.8.8`.
+- Fixed private-domain resolution in SOCKS5/netstack mode. Server-provided dynamic records are retained and routed through the tunnel; enterprise domains use only those records or a server-provided resolver, never the host or system resolver.
 - DNS and WireGuard/netstack state can now refresh in place during recovery without replacing the SOCKS5 listener. Requests fail closed when no internal resolution path is available.
 
 ### 1.0.3 — 2026-08-26

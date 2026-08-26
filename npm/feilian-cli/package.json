@@ -1,6 +1,6 @@
 {
   "name": "feilian-cli",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Unofficial cross-platform Feilian/CorpLink CLI for enterprise tenants, with QR login, mobile push approval, Clash split routing, and SOCKS5 proxy mode.",
   "license": "GPL-2.0-or-later",
   "repository": {
@@ -28,11 +28,11 @@
     "node": ">=16"
   },
   "optionalDependencies": {
-    "feilian-cli-darwin-arm64": "1.0.4",
-    "feilian-cli-darwin-x64": "1.0.4",
-    "feilian-cli-linux-arm64": "1.0.4",
-    "feilian-cli-linux-x64": "1.0.4",
-    "feilian-cli-windows-x64": "1.0.4"
+    "feilian-cli-darwin-arm64": "1.0.5",
+    "feilian-cli-darwin-x64": "1.0.5",
+    "feilian-cli-linux-arm64": "1.0.5",
+    "feilian-cli-linux-x64": "1.0.5",
+    "feilian-cli-windows-x64": "1.0.5"
   },
   "files": [
     "bin/feilian-cli.js",

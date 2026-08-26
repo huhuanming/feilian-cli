@@ -431,16 +431,14 @@ fn netstack_dns_config(
                 continue;
             }
             let route = dns_host_route(ip);
-            if is_internal_dns_server(ip) {
-                split_servers.push(server.clone());
-            }
+            split_servers.push(server.clone());
             servers.push(server);
             routes.push(route);
         }
     }
     if let Some(central_dns) = central_dns {
         if let Ok(ip) = central_dns.dnat_ip.trim().parse::<IpAddr>() {
-            if is_internal_dns_server(ip) && (!ip.is_ipv6() || has_ipv6_address) {
+            if !ip.is_ipv6() || has_ipv6_address {
                 let server = ip.to_string();
                 if !split_servers.contains(&server) {
                     split_servers.insert(0, server.clone());
@@ -463,19 +461,6 @@ fn dns_host_route(ip: IpAddr) -> String {
     match ip {
         IpAddr::V4(_) => format!("{ip}/32"),
         IpAddr::V6(_) => format!("{ip}/128"),
-    }
-}
-
-fn is_internal_dns_server(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => {
-            let octets = ip.octets();
-            ip.is_private()
-                || ip.is_loopback()
-                || ip.is_link_local()
-                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-        }
-        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
     }
 }
 
@@ -3570,7 +3555,7 @@ mod tests {
         let config = netstack_dns_config("8.8.8.8", "10.20.0.53", None, false);
 
         assert_eq!(config.servers, "8.8.8.8,10.20.0.53");
-        assert_eq!(config.split_servers, vec!["10.20.0.53"]);
+        assert_eq!(config.split_servers, vec!["8.8.8.8", "10.20.0.53"]);
         assert_eq!(config.routes, vec!["8.8.8.8/32", "10.20.0.53/32"]);
     }
 
@@ -3579,7 +3564,7 @@ mod tests {
         let config = netstack_dns_config("8.8.8.8,2001:4860:4860::8888", "8.8.8.8", None, false);
 
         assert_eq!(config.servers, "8.8.8.8");
-        assert!(config.split_servers.is_empty());
+        assert_eq!(config.split_servers, vec!["8.8.8.8"]);
         assert_eq!(config.routes, vec!["8.8.8.8/32"]);
     }
 
@@ -3590,18 +3575,19 @@ mod tests {
         };
         let config = netstack_dns_config("8.8.8.8", "", Some(&central), false);
 
-        assert_eq!(config.split_servers, vec!["100.64.0.53"]);
+        assert_eq!(config.split_servers, vec!["100.64.0.53", "8.8.8.8"]);
         assert_eq!(config.routes, vec!["8.8.8.8/32", "100.64.0.53/32"]);
     }
 
     #[test]
-    fn public_central_dns_is_not_used_for_split_domains() {
+    fn server_supplied_public_central_dns_is_used_for_split_domains() {
         let central = RespCentralDns {
-            dnat_ip: "8.8.8.8".to_string(),
+            dnat_ip: "1.1.1.1".to_string(),
         };
         let config = netstack_dns_config("8.8.8.8", "", Some(&central), false);
 
-        assert!(config.split_servers.is_empty());
+        assert_eq!(config.split_servers, vec!["1.1.1.1", "8.8.8.8"]);
+        assert_eq!(config.routes, vec!["8.8.8.8/32", "1.1.1.1/32"]);
     }
 
     #[test]
