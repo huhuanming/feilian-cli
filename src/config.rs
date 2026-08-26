@@ -111,6 +111,8 @@ pub struct HealthCheckTarget {
 pub struct HealthCheckConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Optional compatibility fallback. Server-provided VPN DNS domains are
+    /// preferred when they contain a usable health-check candidate.
     #[serde(default)]
     pub targets: Vec<HealthCheckTarget>,
     #[serde(default = "default_health_interval_seconds")]
@@ -192,9 +194,6 @@ impl HealthCheckConfig {
         }
         if self.max_recovery_attempts == 0 {
             bail!("health_check.max_recovery_attempts must be greater than zero");
-        }
-        if self.enabled && self.targets.is_empty() {
-            bail!("health_check.targets must not be empty when health checks are enabled");
         }
         for (index, target) in self.targets.iter().enumerate() {
             let url = reqwest::Url::parse(&target.url)
@@ -542,6 +541,16 @@ mod tests {
 
         assert!(health.validate().is_err());
     }
+
+    #[test]
+    fn enabled_health_check_can_use_server_targets() {
+        let health = HealthCheckConfig {
+            enabled: true,
+            ..HealthCheckConfig::default()
+        };
+
+        assert!(health.validate().is_ok());
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -559,6 +568,7 @@ pub struct WgConf {
 
     // extra confs
     pub dns: String,
+    pub dns_domains: Vec<String>,
 
     // corplink confs
     pub protocol: i32,

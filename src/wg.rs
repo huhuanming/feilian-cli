@@ -402,6 +402,7 @@ mod tests {
             allowed_ips: vec!["10.0.0.0/8".to_string()],
             routes: vec!["10.0.0.0/8".to_string()],
             dns: "10.0.0.53".to_string(),
+            dns_domains: vec!["internal.example.com".to_string()],
             protocol: 0,
         }
     }

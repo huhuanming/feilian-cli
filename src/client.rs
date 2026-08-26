@@ -2494,6 +2494,7 @@ impl Client {
         let mtu = wg_info.setting.vpn_mtu;
         let primary_dns = wg_info.setting.vpn_dns;
         let backup_dns = wg_info.setting.vpn_dns_backup;
+        let dns_domains = wg_info.setting.vpn_dns_domain_split.unwrap_or_default();
         let peer_key = wg_info.public_key;
         let ip_mask = wg_info.ip_mask.parse::<u32>().context("invalid ip mask")?;
         let address = format!("{}/{}", wg_info.ip, ip_mask);
@@ -2661,6 +2662,7 @@ impl Client {
             allowed_ips,
             routes,
             dns,
+            dns_domains,
             // `force_protocol`, when set, overrides the server-advertised `protocol_mode`
             protocol: match self.conf.force_protocol.as_deref() {
                 Some(p) if p.eq_ignore_ascii_case("udp") => 0,

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -15,6 +16,7 @@ use crate::wg::TunnelRuntime;
 
 const DNS_TYPE_A: u16 = 1;
 const DNS_TYPE_AAAA: u16 = 28;
+const MAX_DISCOVERED_TARGETS: usize = 8;
 const TUNNEL_SETTLE_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +55,17 @@ impl FailureCategory {
 struct CheckFailure {
     category: FailureCategory,
     target: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TargetCheckResult {
+    Passed,
+    NoTarget,
+}
+
+#[derive(Default)]
+struct HealthTargetPool {
+    selected: Option<Url>,
 }
 
 impl CheckFailure {
@@ -215,14 +228,25 @@ pub async fn run(
 ) {
     tokio::time::sleep(Duration::from_secs(config.initial_delay_seconds)).await;
     let mut machine = HealthStateMachine::new(&config);
+    let mut targets = HealthTargetPool::default();
+    let mut warned_no_target = false;
 
     loop {
-        match check_all_targets(&config, wg_conf, path).await {
-            Ok(()) => {
+        match check_health_targets(&config, wg_conf, path, &mut targets).await {
+            Ok(TargetCheckResult::Passed) => {
+                warned_no_target = false;
                 if machine.record_success() {
                     log::info!("health check passed; tunnel is healthy again");
                 } else {
                     log::debug!("health check passed");
+                }
+            }
+            Ok(TargetCheckResult::NoTarget) => {
+                if !warned_no_target {
+                    log::warn!(
+                        "no usable health-check hostname was provided by the VPN server; automatic recovery is idle"
+                    );
+                    warned_no_target = true;
                 }
             }
             Err(failure) => {
@@ -248,7 +272,8 @@ pub async fn run(
                         attempt,
                         machine.max_recovery_attempts
                     );
-                    let outcome = recover(&config, client, wg_conf, tunnel, path).await;
+                    let outcome =
+                        recover(&config, client, wg_conf, tunnel, path, &mut targets).await;
                     let delay = machine.finish_recovery(outcome, Instant::now());
                     match machine.state {
                         HealthState::Healthy => log::info!("tunnel recovered successfully"),
@@ -289,13 +314,17 @@ async fn recover(
     wg_conf: &mut WgConf,
     tunnel: &TunnelRuntime,
     path: &HealthPath,
+    targets: &mut HealthTargetPool,
 ) -> RecoveryOutcome {
     if tunnel.recover_current(wg_conf).await.is_err() {
         log::warn!("failed to refresh the current tunnel state");
         return RecoveryOutcome::Failed;
     }
     tokio::time::sleep(TUNNEL_SETTLE_DELAY).await;
-    if check_all_targets(config, wg_conf, path).await.is_ok() {
+    if matches!(
+        check_health_targets(config, wg_conf, path, targets).await,
+        Ok(TargetCheckResult::Passed)
+    ) {
         return RecoveryOutcome::Recovered;
     }
 
@@ -323,24 +352,107 @@ async fn recover(
     }
     *wg_conf = refreshed;
     tokio::time::sleep(TUNNEL_SETTLE_DELAY).await;
-    if check_all_targets(config, wg_conf, path).await.is_ok() {
+    if matches!(
+        check_health_targets(config, wg_conf, path, targets).await,
+        Ok(TargetCheckResult::Passed)
+    ) {
         RecoveryOutcome::Recovered
     } else {
         RecoveryOutcome::Failed
     }
 }
 
-async fn check_all_targets(
+async fn check_health_targets(
     config: &HealthCheckConfig,
     wg_conf: &WgConf,
     path: &HealthPath,
-) -> std::result::Result<(), CheckFailure> {
+    targets: &mut HealthTargetPool,
+) -> std::result::Result<TargetCheckResult, CheckFailure> {
+    let discovered = discovered_targets(&wg_conf.dns_domains);
+    let mut first_failure = None;
+    let selected = targets
+        .selected
+        .clone()
+        .filter(|selected| discovered.contains(selected));
+    if selected.is_none() {
+        targets.selected = None;
+    }
+
+    if let Some(selected) = selected.as_ref() {
+        match check_target(config, wg_conf, path, selected).await {
+            Ok(()) => return Ok(TargetCheckResult::Passed),
+            Err(failure) => first_failure = Some(failure),
+        }
+    }
+
+    for target in discovered.iter().filter(|candidate| {
+        selected
+            .as_ref()
+            .is_none_or(|selected| selected != *candidate)
+    }) {
+        match check_target(config, wg_conf, path, target).await {
+            Ok(()) => {
+                if targets.selected.as_ref() != Some(target) {
+                    log::info!("selected a server-provided health-check target");
+                }
+                targets.selected = Some(target.clone());
+                return Ok(TargetCheckResult::Passed);
+            }
+            Err(failure) => {
+                if first_failure.is_none() {
+                    first_failure = Some(failure);
+                }
+            }
+        }
+    }
+
+    // Preserve explicitly configured targets as a compatibility fallback. All
+    // configured targets must pass, matching the legacy health-check behavior.
     for configured in &config.targets {
         let target = Url::parse(&configured.url)
             .map_err(|_| CheckFailure::new(FailureCategory::Http, &fallback_url()))?;
         check_target(config, wg_conf, path, &target).await?;
     }
-    Ok(())
+    if !config.targets.is_empty() {
+        return Ok(TargetCheckResult::Passed);
+    }
+
+    match (selected, first_failure) {
+        (Some(_), Some(failure)) => Err(failure),
+        _ => Ok(TargetCheckResult::NoTarget),
+    }
+}
+
+fn discovered_targets(domains: &[String]) -> Vec<Url> {
+    let mut seen = HashSet::new();
+    domains
+        .iter()
+        .filter_map(|domain| discovered_target(domain))
+        .filter(|target| seen.insert(target.clone()))
+        .take(MAX_DISCOVERED_TARGETS)
+        .collect()
+}
+
+fn discovered_target(domain: &str) -> Option<Url> {
+    let domain = domain.trim().trim_end_matches('.');
+    let domain = domain
+        .strip_prefix("*.")
+        .or_else(|| domain.strip_prefix('.'))
+        .unwrap_or(domain);
+    if domain.is_empty()
+        || domain.starts_with('.')
+        || domain.contains(['*', '/', ':', '?', '#', '@', '[', ']'])
+    {
+        return None;
+    }
+    let target = Url::parse(&format!("https://{domain}/")).ok()?;
+    if !target.username().is_empty()
+        || target.password().is_some()
+        || target.host_str()?.parse::<IpAddr>().is_ok()
+    {
+        return None;
+    }
+    Some(target)
 }
 
 async fn check_target(
@@ -1042,6 +1154,73 @@ mod tests {
         assert!(!address_is_tunneled("192.0.2.2".parse().unwrap(), &routes));
     }
 
+    #[test]
+    fn server_domains_become_bounded_deduplicated_https_targets() {
+        let mut domains = vec![
+            "INTERNAL.EXAMPLE.COM.".to_string(),
+            "internal.example.com".to_string(),
+            "*.example.com".to_string(),
+            ".example.com".to_string(),
+            "https://internal.example.com/".to_string(),
+            "192.0.2.1".to_string(),
+        ];
+        domains.extend((0..10).map(|index| format!("host{index}.example.com")));
+
+        let targets = discovered_targets(&domains);
+
+        assert_eq!(targets.len(), MAX_DISCOVERED_TARGETS);
+        assert_eq!(targets[0].as_str(), "https://internal.example.com/");
+        assert!(targets
+            .iter()
+            .any(|target| target.as_str() == "https://example.com/"));
+        assert!(targets.iter().all(|target| !target.as_str().contains('*')));
+    }
+
+    #[tokio::test]
+    async fn missing_server_and_configured_targets_stays_idle() {
+        let mut config = config();
+        config.targets.clear();
+        let mut targets = HealthTargetPool::default();
+
+        assert_eq!(
+            check_health_targets(&config, &test_wg_conf(), &direct_path(), &mut targets).await,
+            Ok(TargetCheckResult::NoTarget)
+        );
+    }
+
+    #[tokio::test]
+    async fn health_dns_never_falls_back_to_the_system_resolver() {
+        let mut wg_conf = test_wg_conf();
+        wg_conf.dns.clear();
+
+        assert_eq!(
+            resolve_through_vpn_dns(&config(), &wg_conf, &direct_path(), "localhost").await,
+            Err(FailureCategory::Dns)
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_failures_do_not_recover_until_a_target_was_selected() {
+        let mut config = config();
+        config.targets.clear();
+        let mut wg_conf = test_wg_conf();
+        wg_conf.dns.clear();
+        wg_conf.dns_domains = vec!["localhost".to_string()];
+        let target = Url::parse("https://localhost/").unwrap();
+        let mut targets = HealthTargetPool::default();
+
+        assert_eq!(
+            check_health_targets(&config, &wg_conf, &direct_path(), &mut targets).await,
+            Ok(TargetCheckResult::NoTarget)
+        );
+
+        targets.selected = Some(target.clone());
+        assert_eq!(
+            check_health_targets(&config, &wg_conf, &direct_path(), &mut targets).await,
+            Err(CheckFailure::new(FailureCategory::Dns, &target))
+        );
+    }
+
     fn test_wg_conf() -> WgConf {
         WgConf {
             address: "10.0.0.2/32".to_string(),
@@ -1054,6 +1233,7 @@ mod tests {
             allowed_ips: vec!["10.0.0.0/8".to_string()],
             routes: vec!["10.0.0.0/8".to_string()],
             dns: "10.0.0.53".to_string(),
+            dns_domains: Vec::new(),
             protocol: 0,
         }
     }

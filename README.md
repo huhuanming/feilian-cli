@@ -203,19 +203,14 @@ Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway b
 
 ## 连接自检与自动自愈 / Connection health and recovery
 
-`health_check` 是可选配置；缺失或 `enabled: false` 时保持原有行为。检查在 VPN/SOCKS5 就绪后启动，分别验证飞连 DNS、WireGuard `AllowedIPs` 路由以及 TCP/TLS/HTTP 可达性。HTTP 401、403、404 等状态仍表示网络可达。
+`health_check` 是可选配置；缺失或 `enabled: false` 时保持原有行为。检查在 VPN/SOCKS5 就绪后启动，从服务端 `vpn_dns_domain_split` 名单中自动选择可用目标，分别验证飞连 DNS、WireGuard `AllowedIPs` 路由以及 TCP/TLS/HTTP 可达性。HTTP 401、403、404 等状态仍表示网络可达。自检 DNS 只使用飞连下发的 DNS，不回退系统或公网 DNS。
 
-`health_check` is optional; missing configuration or `enabled: false` preserves the existing behavior. Checks start only after VPN/SOCKS5 is ready and separately verify Feilian DNS, WireGuard `AllowedIPs`, and TCP/TLS/HTTP reachability. HTTP statuses such as 401, 403, and 404 still count as reachable.
+`health_check` is optional; missing configuration or `enabled: false` preserves the existing behavior. Checks start only after VPN/SOCKS5 is ready, automatically select a usable target from the server-provided `vpn_dns_domain_split` list, and separately verify Feilian DNS, WireGuard `AllowedIPs`, and TCP/TLS/HTTP reachability. HTTP statuses such as 401, 403, and 404 still count as reachable. Health-check DNS uses only Feilian-provided resolvers and never falls back to system or public DNS.
 
 ```json
 {
   "health_check": {
     "enabled": true,
-    "targets": [
-      {
-        "url": "https://internal.example.com/"
-      }
-    ],
     "interval_seconds": 60,
     "initial_delay_seconds": 15,
     "dns_timeout_seconds": 5,
@@ -226,6 +221,10 @@ Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway b
   }
 }
 ```
+
+如果服务端名单没有可用的具体主机名，可继续使用可选 `targets` 作为兼容回退，例如 `[{"url":"https://internal.example.com/"}]`。`*.` 和以点开头的后缀会先归一为根域尝试；候选只有在飞连 DNS 解析、隧道路由和 HTTPS 检查全部成功后才会被选中。首次没有发现可用目标时不会触发恢复，避免把仅用于分流的域名后缀误判为链路故障。
+
+If the server list has no usable concrete hostname, optional `targets` remain available as a compatibility fallback, for example `[{"url":"https://internal.example.com/"}]`. `*.` and dot-prefixed suffixes are normalized to their root domain first; a candidate is selected only after Feilian DNS resolution, tunnel-route validation, and an HTTPS check all succeed. Failure to discover an initial target does not trigger recovery, avoiding false link failures from suffix-only routing rules.
 
 连续失败达到阈值后，CLI 会先刷新当前 WireGuard 状态，再在不触发交互登录或 MFA 的前提下尝试重新获取 VPN 配置。认证失效或达到最大次数时会停止自动恢复，但不会主动结束 CLI。SOCKS5 模式的自检直接使用 feilian-cli 自己的代理，不经过 Clash/Stash 上游。
 
