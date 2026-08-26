@@ -211,7 +211,7 @@ Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway b
 {
   "health_check": {
     "enabled": true,
-    "interval_seconds": 600,
+    "interval_seconds": 300,
     "initial_delay_seconds": 15,
     "dns_timeout_seconds": 5,
     "request_timeout_seconds": 10,

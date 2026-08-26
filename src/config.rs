@@ -21,7 +21,7 @@ const DEFAULT_INTERFACE_NAME: &str = "utun12345";
 const DEFAULT_INTERFACE_NAME: &str = "corplink";
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "feilian-cli.config.json";
 
-pub const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 10 * 60;
+pub const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 5 * 60;
 pub const DEFAULT_HEALTH_INITIAL_DELAY_SECONDS: u64 = 15;
 pub const DEFAULT_HEALTH_DNS_TIMEOUT_SECONDS: u64 = 5;
 pub const DEFAULT_HEALTH_REQUEST_TIMEOUT_SECONDS: u64 = 10;
@@ -550,7 +550,7 @@ mod tests {
         };
 
         assert!(health.validate().is_ok());
-        assert_eq!(health.interval_seconds, 600);
+        assert_eq!(health.interval_seconds, 300);
     }
 }
 
