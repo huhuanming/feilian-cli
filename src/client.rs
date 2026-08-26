@@ -50,6 +50,28 @@ const VPN_SESSION_MISSING_CODE: i32 = 10220001;
 const VPN_MFA_SCENE: &str = "vpn";
 const VPN_PUSH_CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Debug)]
+pub struct RecoveryAuthenticationRequired;
+
+impl fmt::Display for RecoveryAuthenticationRequired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "authentication required for VPN recovery")
+    }
+}
+
+impl std::error::Error for RecoveryAuthenticationRequired {}
+
+#[derive(Debug)]
+pub struct RecoveryRateLimited;
+
+impl fmt::Display for RecoveryRateLimited {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VPN recovery request was rate-limited")
+    }
+}
+
+impl std::error::Error for RecoveryRateLimited {}
+
 #[derive(Clone, Debug, PartialEq)]
 struct WebSocketEvent {
     event_id: String,
@@ -567,6 +589,7 @@ pub struct Client {
     vpn_push_events: Option<broadcast::Sender<WebSocketEvent>>,
     vpn_push_task: Option<JoinHandle<()>>,
     vpn_push_cookie_fingerprint: Option<HashMap<String, Vec<u8>>>,
+    automatic_recovery: bool,
 }
 
 type VpnPushWebSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -809,6 +832,7 @@ impl Client {
             vpn_push_events: None,
             vpn_push_task: None,
             vpn_push_cookie_fingerprint: None,
+            automatic_recovery: false,
         })
     }
 
@@ -1213,6 +1237,18 @@ impl Client {
         };
 
         if !resp.status().is_success() {
+            if self.automatic_recovery {
+                if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    return Err(RecoveryRateLimited.into());
+                }
+                if matches!(
+                    resp.status(),
+                    reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+                ) {
+                    return Err(RecoveryAuthenticationRequired.into());
+                }
+                bail!("VPN recovery API returned HTTP status {}", resp.status());
+            }
             let msg = format!("logout because of bad resp code: {}", resp.status());
             self.handle_logout_err(msg).await?;
         }
@@ -1836,6 +1872,9 @@ impl Client {
     }
 
     async fn handle_logout_err(&mut self, msg: String) -> Result<()> {
+        if self.automatic_recovery {
+            return Err(RecoveryAuthenticationRequired.into());
+        }
         self.stop_vpn_push_websocket();
         {
             let mut cookie_store = self
@@ -1865,6 +1904,7 @@ impl Client {
                 self.handle_logout_err(msg).await?;
                 unreachable!()
             }
+            429 => Err(RecoveryRateLimited.into()),
             _ => bail!(format!(
                 "failed to list vpn with error {}: {}",
                 resp.code,
@@ -1888,6 +1928,7 @@ impl Client {
                 self.handle_logout_err(msg).await?;
                 unreachable!()
             }
+            429 => Err(RecoveryRateLimited.into()),
             _ => bail!(format!(
                 "failed to initialize FeiLian session settings with error {}: {}",
                 resp.code,
@@ -2107,6 +2148,8 @@ impl Client {
                 Some(PLATFORM_CORPLINK_EMAIL | PLATFORM_CORPLINK_QR | PLATFORM_CORPLINK_V1)
             ) {
                 log::info!("try current VPN MFA flow");
+            } else if self.automatic_recovery {
+                return Err(RecoveryAuthenticationRequired.into());
             } else {
                 log::info!("input your 2fa code:");
                 otp = utils::read_line().await?;
@@ -2123,6 +2166,9 @@ impl Client {
             .request::<RespWgInfo>(ApiName::ConnectVPN, Some(m))
             .await?;
         if resp.code == VPN_MFA_REQUIRED_CODE {
+            if self.automatic_recovery {
+                return Err(RecoveryAuthenticationRequired.into());
+            }
             self.complete_vpn_mfa((!otp.is_empty()).then_some(otp.as_str()))
                 .await?;
             (public_key, private_key) = utils::gen_wg_keypair();
@@ -2144,6 +2190,7 @@ impl Client {
                 self.handle_logout_err(msg).await?;
                 unreachable!()
             }
+            429 => Err(RecoveryRateLimited.into()),
             _ => bail!(format!(
                 "failed to fetch peer info with error {}: {}",
                 resp.code,
@@ -2336,6 +2383,19 @@ impl Client {
     }
 
     pub async fn connect_vpn(&mut self) -> Result<WgConf> {
+        self.connect_vpn_inner().await
+    }
+
+    /// Refresh VPN configuration without prompting, sending MFA, or clearing
+    /// authentication state. The caller classifies the typed terminal errors.
+    pub async fn connect_vpn_for_recovery(&mut self) -> Result<WgConf> {
+        self.automatic_recovery = true;
+        let result = self.connect_vpn_inner().await;
+        self.automatic_recovery = false;
+        result
+    }
+
+    async fn connect_vpn_inner(&mut self) -> Result<WgConf> {
         self.initialize_session_setting().await?;
         let vpn_info = self.list_vpn().await?;
         if let Err(error) = self.start_vpn_push_websocket().await {

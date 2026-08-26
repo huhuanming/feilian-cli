@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::fs;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,14 @@ const DEFAULT_INTERFACE_NAME: &str = "utun12345";
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_INTERFACE_NAME: &str = "corplink";
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "feilian-cli.config.json";
+
+pub const DEFAULT_HEALTH_INTERVAL_SECONDS: u64 = 60;
+pub const DEFAULT_HEALTH_INITIAL_DELAY_SECONDS: u64 = 15;
+pub const DEFAULT_HEALTH_DNS_TIMEOUT_SECONDS: u64 = 5;
+pub const DEFAULT_HEALTH_REQUEST_TIMEOUT_SECONDS: u64 = 10;
+pub const DEFAULT_HEALTH_FAILURE_THRESHOLD: u32 = 3;
+pub const DEFAULT_HEALTH_RECOVERY_COOLDOWN_SECONDS: u64 = 60;
+pub const DEFAULT_HEALTH_MAX_RECOVERY_ATTEMPTS: u32 = 3;
 
 pub const PLATFORM_LDAP: &str = "ldap";
 pub const PLATFORM_CORPLINK: &str = "feilian";
@@ -94,6 +102,117 @@ impl fmt::Display for RouteMode {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct HealthCheckTarget {
+    pub url: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct HealthCheckConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub targets: Vec<HealthCheckTarget>,
+    #[serde(default = "default_health_interval_seconds")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_health_initial_delay_seconds")]
+    pub initial_delay_seconds: u64,
+    #[serde(default = "default_health_dns_timeout_seconds")]
+    pub dns_timeout_seconds: u64,
+    #[serde(default = "default_health_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
+    #[serde(default = "default_health_failure_threshold")]
+    pub failure_threshold: u32,
+    #[serde(default = "default_health_recovery_cooldown_seconds")]
+    pub recovery_cooldown_seconds: u64,
+    #[serde(default = "default_health_max_recovery_attempts")]
+    pub max_recovery_attempts: u32,
+}
+
+const fn default_health_interval_seconds() -> u64 {
+    DEFAULT_HEALTH_INTERVAL_SECONDS
+}
+
+const fn default_health_initial_delay_seconds() -> u64 {
+    DEFAULT_HEALTH_INITIAL_DELAY_SECONDS
+}
+
+const fn default_health_dns_timeout_seconds() -> u64 {
+    DEFAULT_HEALTH_DNS_TIMEOUT_SECONDS
+}
+
+const fn default_health_request_timeout_seconds() -> u64 {
+    DEFAULT_HEALTH_REQUEST_TIMEOUT_SECONDS
+}
+
+const fn default_health_failure_threshold() -> u32 {
+    DEFAULT_HEALTH_FAILURE_THRESHOLD
+}
+
+const fn default_health_recovery_cooldown_seconds() -> u64 {
+    DEFAULT_HEALTH_RECOVERY_COOLDOWN_SECONDS
+}
+
+const fn default_health_max_recovery_attempts() -> u32 {
+    DEFAULT_HEALTH_MAX_RECOVERY_ATTEMPTS
+}
+
+impl Default for HealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            targets: Vec::new(),
+            interval_seconds: DEFAULT_HEALTH_INTERVAL_SECONDS,
+            initial_delay_seconds: DEFAULT_HEALTH_INITIAL_DELAY_SECONDS,
+            dns_timeout_seconds: DEFAULT_HEALTH_DNS_TIMEOUT_SECONDS,
+            request_timeout_seconds: DEFAULT_HEALTH_REQUEST_TIMEOUT_SECONDS,
+            failure_threshold: DEFAULT_HEALTH_FAILURE_THRESHOLD,
+            recovery_cooldown_seconds: DEFAULT_HEALTH_RECOVERY_COOLDOWN_SECONDS,
+            max_recovery_attempts: DEFAULT_HEALTH_MAX_RECOVERY_ATTEMPTS,
+        }
+    }
+}
+
+impl HealthCheckConfig {
+    fn validate(&self) -> Result<()> {
+        if self.interval_seconds == 0 {
+            bail!("health_check.interval_seconds must be greater than zero");
+        }
+        if self.dns_timeout_seconds == 0 {
+            bail!("health_check.dns_timeout_seconds must be greater than zero");
+        }
+        if self.request_timeout_seconds == 0 {
+            bail!("health_check.request_timeout_seconds must be greater than zero");
+        }
+        if self.failure_threshold == 0 {
+            bail!("health_check.failure_threshold must be greater than zero");
+        }
+        if self.recovery_cooldown_seconds == 0 {
+            bail!("health_check.recovery_cooldown_seconds must be greater than zero");
+        }
+        if self.max_recovery_attempts == 0 {
+            bail!("health_check.max_recovery_attempts must be greater than zero");
+        }
+        if self.enabled && self.targets.is_empty() {
+            bail!("health_check.targets must not be empty when health checks are enabled");
+        }
+        for (index, target) in self.targets.iter().enumerate() {
+            let url = reqwest::Url::parse(&target.url)
+                .with_context(|| format!("health_check.targets[{index}].url is invalid"))?;
+            if !matches!(url.scheme(), "http" | "https") {
+                bail!("health_check.targets[{index}].url must use http or https");
+            }
+            if url.host_str().is_none() {
+                bail!("health_check.targets[{index}].url must include a host");
+            }
+            if !url.username().is_empty() || url.password().is_some() {
+                bail!("health_check.targets[{index}].url must not include credentials");
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub company_name: String,
@@ -153,6 +272,10 @@ pub struct Config {
     /// head-of-line blocking), forcing "udp" can be far faster there. Leave unset to keep the
     /// default (follow server `protocol_mode`: 1 => tcp, otherwise udp).
     pub force_protocol: Option<String>,
+    /// Optional in-process health checking and bounded recovery. Missing or
+    /// disabled preserves the legacy connection lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_check: Option<HealthCheckConfig>,
 }
 
 impl fmt::Display for Config {
@@ -172,6 +295,12 @@ impl Config {
 
         let mut conf: Config = serde_json::from_str(&conf_str[..])
             .with_context(|| format!("failed to parse config file {file}"))?;
+
+        if let Some(health_check) = conf.health_check.as_ref() {
+            health_check
+                .validate()
+                .with_context(|| format!("invalid health_check configuration in {file}"))?;
+        }
 
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
@@ -343,6 +472,75 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
 
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn legacy_config_without_health_check_still_deserializes() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "company_name": "example-company",
+                "username": "user@example.com"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(config.health_check.is_none());
+    }
+
+    #[test]
+    fn health_check_defaults_and_fields_deserialize() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "company_name": "example-company",
+                "username": "user@example.com",
+                "health_check": {
+                    "enabled": true,
+                    "targets": [{"url": "https://internal.example.com/"}],
+                    "interval_seconds": 30,
+                    "failure_threshold": 2
+                }
+            }"#,
+        )
+        .unwrap();
+        let health = config.health_check.unwrap();
+
+        assert!(health.enabled);
+        assert_eq!(health.targets[0].url, "https://internal.example.com/");
+        assert_eq!(health.interval_seconds, 30);
+        assert_eq!(health.failure_threshold, 2);
+        assert_eq!(
+            health.initial_delay_seconds,
+            DEFAULT_HEALTH_INITIAL_DELAY_SECONDS
+        );
+        assert_eq!(
+            health.dns_timeout_seconds,
+            DEFAULT_HEALTH_DNS_TIMEOUT_SECONDS
+        );
+        assert_eq!(
+            health.request_timeout_seconds,
+            DEFAULT_HEALTH_REQUEST_TIMEOUT_SECONDS
+        );
+        assert_eq!(
+            health.recovery_cooldown_seconds,
+            DEFAULT_HEALTH_RECOVERY_COOLDOWN_SECONDS
+        );
+        assert_eq!(
+            health.max_recovery_attempts,
+            DEFAULT_HEALTH_MAX_RECOVERY_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn invalid_enabled_health_check_is_rejected() {
+        let health = HealthCheckConfig {
+            enabled: true,
+            targets: vec![HealthCheckTarget {
+                url: "file:///tmp/private".to_string(),
+            }],
+            ..HealthCheckConfig::default()
+        };
+
+        assert!(health.validate().is_err());
     }
 }
 

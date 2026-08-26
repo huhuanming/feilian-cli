@@ -2,6 +2,7 @@ mod api;
 mod client;
 mod config;
 mod dns;
+mod health;
 mod qrcode;
 mod resp;
 mod state;
@@ -176,6 +177,10 @@ async fn run() -> Result<()> {
     let socks5_username = conf.socks5_username.clone().unwrap_or_default();
     let socks5_password = conf.socks5_password.clone().unwrap_or_default();
     let netstack_mode = socks5_listen.is_some();
+    let health_check = conf
+        .health_check
+        .clone()
+        .filter(|health_check| health_check.enabled);
 
     // netstack/socks5 mode runs entirely in userspace (no kernel TUN device,
     // no system routes/dns), so it does not require elevated privileges.
@@ -239,7 +244,7 @@ async fn run() -> Result<()> {
             }
         };
     }
-    let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
+    let mut wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
     let protocol = wg_conf.protocol;
     let mut uapi = wg::UAPIClient { name: name.clone() };
     if let Some(listen) = &socks5_listen {
@@ -286,21 +291,48 @@ async fn run() -> Result<()> {
     }
 
     let mut exit_code = 0;
-    tokio::select! {
-        _ = wait_for_shutdown_signal() => {},
+    if let Some(health_check) = health_check {
+        let health_path = health::HealthPath {
+            socks5_listen: socks5_listen.clone(),
+            socks5_username: socks5_username.clone(),
+            socks5_password: socks5_password.clone(),
+        };
+        let tunnel = wg::TunnelRuntime {
+            name: name.clone(),
+            netstack_mode,
+            with_wg_log,
+        };
+        log::info!(
+            "health checking enabled for {} target(s)",
+            health_check.targets.len()
+        );
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => {},
+            _ = health::run(
+                health_check,
+                &mut c,
+                &mut wg_conf,
+                &tunnel,
+                &health_path,
+            ) => {},
+        }
+    } else {
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => {},
 
-        // keep alive
-        // _ = c.keep_alive_vpn(&wg_conf, 60) => {
-        //     exit_code = ETIMEDOUT;
-        // },
+            // keep alive
+            // _ = c.keep_alive_vpn(&wg_conf, 60) => {
+            //     exit_code = ETIMEDOUT;
+            // },
 
-        // check wg handshake and exit if timeout
-        _ = async {
-            uapi.check_wg_connection().await;
-            log::warn!("last handshake timeout");
-        } => {
-            exit_code = ETIMEDOUT;
-        },
+            // Preserve the legacy watchdog when health checking is disabled.
+            _ = async {
+                uapi.check_wg_connection().await;
+                log::warn!("last handshake timeout");
+            } => {
+                exit_code = ETIMEDOUT;
+            },
+        }
     }
 
     // shutdown

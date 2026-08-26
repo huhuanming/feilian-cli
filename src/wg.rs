@@ -127,6 +127,102 @@ pub struct UAPIClient {
     pub name: String,
 }
 
+#[derive(Clone)]
+pub struct TunnelRuntime {
+    pub name: String,
+    pub netstack_mode: bool,
+    pub with_wg_log: bool,
+}
+
+impl TunnelRuntime {
+    pub async fn recover_current(&self, conf: &config::WgConf) -> Result<()> {
+        let mut uapi = UAPIClient {
+            name: self.name.clone(),
+        };
+        if self.netstack_mode {
+            // The embedded SOCKS listener is process-lifetime state. Refreshing
+            // the WireGuard peer in place avoids orphaning that listener.
+            return uapi
+                .config_wg_netstack(conf)
+                .await
+                .context("failed to refresh netstack WireGuard state");
+        }
+
+        stop_wg_go();
+        start_wg_go(&self.name, conf.protocol, self.with_wg_log)
+            .context("failed to restart WireGuard tunnel")?;
+        uapi.config_wg(conf)
+            .await
+            .context("failed to configure restarted WireGuard tunnel")
+    }
+
+    pub async fn apply_refreshed(
+        &self,
+        current: &config::WgConf,
+        refreshed: &config::WgConf,
+    ) -> Result<()> {
+        if self.netstack_mode {
+            if !netstack_runtime_compatible(current, refreshed) {
+                log::warn!(
+                    "refreshed VPN configuration requires a netstack restart; keeping the current SOCKS5 listener unchanged"
+                );
+                return Err(anyhow!(
+                    "refreshed VPN configuration changes fixed netstack parameters"
+                ));
+            }
+            let mut uapi = UAPIClient {
+                name: self.name.clone(),
+            };
+            return uapi
+                .config_wg_netstack(refreshed)
+                .await
+                .context("failed to apply refreshed netstack WireGuard state");
+        }
+
+        stop_wg_go();
+        let apply_result = async {
+            start_wg_go(&self.name, refreshed.protocol, self.with_wg_log)
+                .context("failed to start refreshed WireGuard tunnel")?;
+            let mut uapi = UAPIClient {
+                name: self.name.clone(),
+            };
+            uapi.config_wg(refreshed)
+                .await
+                .context("failed to configure refreshed WireGuard tunnel")
+        }
+        .await;
+        if apply_result.is_ok() {
+            return Ok(());
+        }
+
+        log::warn!("refreshed tunnel setup failed; restoring previous tunnel configuration");
+        stop_wg_go();
+        if let Err(rollback_error) = async {
+            start_wg_go(&self.name, current.protocol, self.with_wg_log)
+                .context("failed to restart previous WireGuard tunnel")?;
+            let mut uapi = UAPIClient {
+                name: self.name.clone(),
+            };
+            uapi.config_wg(current)
+                .await
+                .context("failed to restore previous WireGuard configuration")
+        }
+        .await
+        {
+            log::warn!("failed to restore previous tunnel configuration: {rollback_error}");
+        }
+        apply_result
+    }
+}
+
+fn netstack_runtime_compatible(current: &config::WgConf, refreshed: &config::WgConf) -> bool {
+    current.address == refreshed.address
+        && current.address6 == refreshed.address6
+        && current.mtu == refreshed.mtu
+        && current.dns == refreshed.dns
+        && current.protocol == refreshed.protocol
+}
+
 impl UAPIClient {
     pub async fn config_wg(&mut self, conf: &config::WgConf) -> Result<()> {
         let mut buff = String::from("set=1\n");
@@ -286,6 +382,60 @@ impl UAPIClient {
                     break;
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conf() -> config::WgConf {
+        config::WgConf {
+            address: "10.0.0.2/32".to_string(),
+            address6: String::new(),
+            peer_address: "192.0.2.1:51820".to_string(),
+            mtu: 1280,
+            public_key: "public".to_string(),
+            private_key: "private".to_string(),
+            peer_key: "peer".to_string(),
+            allowed_ips: vec!["10.0.0.0/8".to_string()],
+            routes: vec!["10.0.0.0/8".to_string()],
+            dns: "10.0.0.53".to_string(),
+            protocol: 0,
+        }
+    }
+
+    #[test]
+    fn netstack_refresh_accepts_peer_only_changes() {
+        let current = conf();
+        let mut refreshed = current.clone();
+        refreshed.peer_address = "192.0.2.2:51820".to_string();
+        refreshed.private_key = "new-private".to_string();
+        refreshed.peer_key = "new-peer".to_string();
+        refreshed.allowed_ips.push("172.16.0.0/12".to_string());
+
+        assert!(netstack_runtime_compatible(&current, &refreshed));
+    }
+
+    #[test]
+    fn netstack_refresh_rejects_fixed_parameter_changes() {
+        let current = conf();
+        for refreshed in [
+            config::WgConf {
+                address: "10.0.0.3/32".to_string(),
+                ..current.clone()
+            },
+            config::WgConf {
+                dns: "10.0.0.54".to_string(),
+                ..current.clone()
+            },
+            config::WgConf {
+                protocol: 1,
+                ..current.clone()
+            },
+        ] {
+            assert!(!netstack_runtime_compatible(&current, &refreshed));
         }
     }
 }

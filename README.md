@@ -201,6 +201,36 @@ Other traffic        → existing Clash rules
 
 Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway back through `Feilian-Enterprise`, or a loop will occur. Do not configure a public fallback for enterprise rules; private requests should fail closed when Feilian disconnects.
 
+## 连接自检与自动自愈 / Connection health and recovery
+
+`health_check` 是可选配置；缺失或 `enabled: false` 时保持原有行为。检查在 VPN/SOCKS5 就绪后启动，分别验证飞连 DNS、WireGuard `AllowedIPs` 路由以及 TCP/TLS/HTTP 可达性。HTTP 401、403、404 等状态仍表示网络可达。
+
+`health_check` is optional; missing configuration or `enabled: false` preserves the existing behavior. Checks start only after VPN/SOCKS5 is ready and separately verify Feilian DNS, WireGuard `AllowedIPs`, and TCP/TLS/HTTP reachability. HTTP statuses such as 401, 403, and 404 still count as reachable.
+
+```json
+{
+  "health_check": {
+    "enabled": true,
+    "targets": [
+      {
+        "url": "https://internal.example.com/"
+      }
+    ],
+    "interval_seconds": 60,
+    "initial_delay_seconds": 15,
+    "dns_timeout_seconds": 5,
+    "request_timeout_seconds": 10,
+    "failure_threshold": 3,
+    "recovery_cooldown_seconds": 60,
+    "max_recovery_attempts": 3
+  }
+}
+```
+
+连续失败达到阈值后，CLI 会先刷新当前 WireGuard 状态，再在不触发交互登录或 MFA 的前提下尝试重新获取 VPN 配置。认证失效或达到最大次数时会停止自动恢复，但不会主动结束 CLI。SOCKS5 模式的自检直接使用 feilian-cli 自己的代理，不经过 Clash/Stash 上游。
+
+After the failure threshold is reached, the CLI first refreshes current WireGuard state, then may fetch VPN configuration again only without interactive login or MFA. Automatic recovery stops on expired authentication or after the configured attempt limit without intentionally exiting the CLI. SOCKS5 checks use feilian-cli's own proxy directly, not a Clash/Stash upstream.
+
 ## 系统 VPN / TUN 模式
 
 不设置 `socks5_listen` 时，CLI 使用系统 TUN 模式，并根据飞连服务端返回的路由连接企业网络。
