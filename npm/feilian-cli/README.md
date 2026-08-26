@@ -54,7 +54,7 @@ feilian-cli --version
 
 ## 更新日志 / Changelog
 
-### 未发布 / Unreleased
+### 1.0.4 — 2026-08-26
 
 - 修复 SOCKS5/netstack 内网域名解析：保留服务端动态域名记录并自动加入隧道路由；企业域名只使用动态记录或服务端内网解析器，不再回退到 `8.8.8.8` 等公网 DNS。
 - DNS 与 WireGuard/netstack 状态可在自动恢复时原地刷新，不替换现有 SOCKS5 监听器；没有可用内网解析路径时会安全失败。
