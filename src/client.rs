@@ -30,9 +30,9 @@ use tokio_tungstenite::{connect_async, WebSocketStream};
 
 use crate::api::{corplink_user_agent, ApiName, ApiUrl, URL_GET_COMPANY};
 use crate::config::{
-    Config, RouteMode, WgConf, PLATFORM_CORPLINK, PLATFORM_CORPLINK_EMAIL, PLATFORM_CORPLINK_QR,
-    PLATFORM_CORPLINK_V1, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC, STRATEGY_DEFAULT,
-    STRATEGY_LATENCY,
+    normalize_dns_name, Config, NetstackDnsPolicy, RouteMode, WgConf, PLATFORM_CORPLINK,
+    PLATFORM_CORPLINK_EMAIL, PLATFORM_CORPLINK_QR, PLATFORM_CORPLINK_V1, PLATFORM_LARK,
+    PLATFORM_LDAP, PLATFORM_OIDC, STRATEGY_DEFAULT, STRATEGY_LATENCY,
 };
 use crate::qrcode::TerminalQrCode;
 use crate::resp::*;
@@ -393,12 +393,21 @@ fn merge_additional_routes(
     routes
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct NetstackDnsConfig {
+    servers: String,
+    split_servers: Vec<String>,
+    routes: Vec<String>,
+}
+
 fn netstack_dns_config(
     primary: &str,
     backup: &str,
+    central_dns: Option<&RespCentralDns>,
     has_ipv6_address: bool,
-) -> (String, Vec<String>) {
+) -> NetstackDnsConfig {
     let mut servers = Vec::new();
+    let mut split_servers = Vec::new();
     let mut routes = Vec::new();
     for configured in [primary, backup] {
         for value in configured.split(',') {
@@ -421,15 +430,109 @@ fn netstack_dns_config(
             if servers.contains(&server) {
                 continue;
             }
-            let route = match ip {
-                IpAddr::V4(_) => format!("{ip}/32"),
-                IpAddr::V6(_) => format!("{ip}/128"),
-            };
+            let route = dns_host_route(ip);
+            if is_internal_dns_server(ip) {
+                split_servers.push(server.clone());
+            }
             servers.push(server);
             routes.push(route);
         }
     }
-    (servers.join(","), routes)
+    if let Some(central_dns) = central_dns {
+        if let Ok(ip) = central_dns.dnat_ip.trim().parse::<IpAddr>() {
+            if is_internal_dns_server(ip) && (!ip.is_ipv6() || has_ipv6_address) {
+                let server = ip.to_string();
+                if !split_servers.contains(&server) {
+                    split_servers.insert(0, server.clone());
+                }
+                let route = dns_host_route(ip);
+                if !routes.contains(&route) {
+                    routes.push(route);
+                }
+            }
+        }
+    }
+    NetstackDnsConfig {
+        servers: servers.join(","),
+        split_servers,
+        routes,
+    }
+}
+
+fn dns_host_route(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(_) => format!("{ip}/32"),
+        IpAddr::V6(_) => format!("{ip}/128"),
+    }
+}
+
+fn is_internal_dns_server(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
+    }
+}
+
+fn normalize_dns_records(
+    records: Option<std::collections::BTreeMap<String, Vec<String>>>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut normalized = std::collections::BTreeMap::new();
+    for (name, values) in records.unwrap_or_default() {
+        let name = normalize_dns_name(&name);
+        if !name.is_empty() {
+            normalized
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .extend(values);
+        }
+    }
+    normalized
+}
+
+fn merge_dns_records(
+    target: &mut std::collections::BTreeMap<String, Vec<String>>,
+    source: Option<std::collections::BTreeMap<String, Vec<String>>>,
+) {
+    for (name, values) in normalize_dns_records(source) {
+        let target_values = target.entry(name).or_default();
+        for value in values {
+            if !target_values.contains(&value) {
+                target_values.push(value);
+            }
+        }
+    }
+}
+
+fn dynamic_dns_routes(policy: &NetstackDnsPolicy, has_ipv6_address: bool) -> Vec<String> {
+    let mut routes = Vec::new();
+    for values in policy
+        .exact_v4
+        .values()
+        .chain(policy.exact_v6.values())
+        .chain(policy.wildcard_v4.values())
+        .chain(policy.suffix_v4.values())
+    {
+        for value in values {
+            let value = value.split('/').next().unwrap_or(value).trim();
+            let Ok(ip) = value.parse::<IpAddr>() else {
+                continue;
+            };
+            if ip.is_ipv6() && !has_ipv6_address {
+                continue;
+            }
+            let route = dns_host_route(ip);
+            if !routes.contains(&route) {
+                routes.push(route);
+            }
+        }
+    }
+    routes
 }
 
 async fn resolve_additional_domains(domains: &[String], has_ipv6_address: bool) -> Vec<String> {
@@ -2495,6 +2598,23 @@ impl Client {
         let primary_dns = wg_info.setting.vpn_dns;
         let backup_dns = wg_info.setting.vpn_dns_backup;
         let dns_domains = wg_info.setting.vpn_dns_domain_split.unwrap_or_default();
+        let central_dns = wg_info.setting.central_dns;
+        let mut dns_policy = NetstackDnsPolicy {
+            split_domains: dns_domains.clone(),
+            exact_v4: normalize_dns_records(wg_info.setting.dynamic_domain),
+            exact_v6: normalize_dns_records(wg_info.setting.v6_vpn_dynamic_domain_route_split),
+            wildcard_v4: normalize_dns_records(
+                wg_info.setting.vpn_wildcard_dynamic_domain_route_split,
+            ),
+            suffix_v4: normalize_dns_records(
+                wg_info.setting.suffix_wildcard_dynamic_domain_route_split,
+            ),
+            ..NetstackDnsPolicy::default()
+        };
+        merge_dns_records(
+            &mut dns_policy.exact_v4,
+            wg_info.setting.vpn_dynamic_domain_route_split,
+        );
         let peer_key = wg_info.public_key;
         let ip_mask = wg_info.ip_mask.parse::<u32>().context("invalid ip mask")?;
         let address = format!("{}/{}", wg_info.ip, ip_mask);
@@ -2551,20 +2671,44 @@ impl Client {
         };
 
         let netstack_mode = self.conf.socks5_listen.is_some();
-        let (dns, netstack_dns_routes) = if netstack_mode {
-            let (servers, routes) =
-                netstack_dns_config(&primary_dns, &backup_dns, has_ipv6_address);
-            if servers.is_empty() {
+        let netstack_dns = netstack_dns_config(
+            &primary_dns,
+            &backup_dns,
+            central_dns.as_ref(),
+            has_ipv6_address,
+        );
+        dns_policy.split_dns_servers = netstack_dns.split_servers.clone();
+        let (dns, mut netstack_dns_routes) = if netstack_mode {
+            if netstack_dns.servers.is_empty() {
                 bail!("VPN server returned no usable DNS servers for SOCKS5/netstack mode");
             }
             log::info!(
-                "SOCKS5/netstack DNS configured with {} server(s)",
-                routes.len()
+                "SOCKS5/netstack DNS configured with {} server(s), {} split resolver(s), and {} dynamic record group(s)",
+                netstack_dns.servers.split(',').count(),
+                dns_policy.split_dns_servers.len(),
+                dns_policy.exact_v4.len()
+                    + dns_policy.exact_v6.len()
+                    + dns_policy.wildcard_v4.len()
+                    + dns_policy.suffix_v4.len()
             );
-            (servers, routes)
+            if !dns_policy.split_domains.is_empty()
+                && dns_policy.split_dns_servers.is_empty()
+                && dns_policy.exact_v4.is_empty()
+                && dns_policy.exact_v6.is_empty()
+                && dns_policy.wildcard_v4.is_empty()
+                && dns_policy.suffix_v4.is_empty()
+            {
+                log::warn!(
+                    "VPN server provided internal DNS domains but no internal resolver or dynamic records; matching SOCKS5 queries will fail closed"
+                );
+            }
+            (netstack_dns.servers, netstack_dns.routes)
         } else {
             (primary_dns, Vec::new())
         };
+        if netstack_mode {
+            netstack_dns_routes.extend(dynamic_dns_routes(&dns_policy, has_ipv6_address));
+        }
 
         let mut additional_routes = self.conf.vpn_additional_routes.clone().unwrap_or_default();
         additional_routes.extend(netstack_dns_routes);
@@ -2663,6 +2807,7 @@ impl Client {
             routes,
             dns,
             dns_domains,
+            dns_policy,
             // `force_protocol`, when set, overrides the server-advertised `protocol_mode`
             protocol: match self.conf.force_protocol.as_deref() {
                 Some(p) if p.eq_ignore_ascii_case("udp") => 0,
@@ -2804,15 +2949,15 @@ mod tests {
     use tokio::time::{sleep, timeout};
 
     use super::{
-        encode_sign_header, hkdf_sha256, merge_additional_routes, netstack_dns_config,
-        normalize_mac_address, parse_websocket_event, pump_vpn_push_websocket,
+        dynamic_dns_routes, encode_sign_header, hkdf_sha256, merge_additional_routes,
+        netstack_dns_config, normalize_mac_address, parse_websocket_event, pump_vpn_push_websocket,
         resolve_additional_domains, select_supported_vpn_mfa_type, value_after_keyword,
         vpn_connect_body, vpn_push_result, wait_for_vpn_push_confirmation, websocket_header,
         Client, ReqwestCookieStore, VpnPushConnector, WebSocketEvent,
     };
     use crate::api::{ApiName, ApiUrl};
-    use crate::config::{Config, RouteMode};
-    use crate::resp::{RespVpnInfo, RespVpnMfaType};
+    use crate::config::{Config, NetstackDnsPolicy, RouteMode};
+    use crate::resp::{RespCentralDns, RespVpnInfo, RespVpnMfaType};
     use crate::utils::apply_route_filters;
 
     #[test]
@@ -3422,19 +3567,60 @@ mod tests {
 
     #[test]
     fn netstack_dns_uses_primary_and_backup_with_host_routes() {
-        let (servers, routes) = netstack_dns_config("8.8.8.8", "10.20.0.53", false);
+        let config = netstack_dns_config("8.8.8.8", "10.20.0.53", None, false);
 
-        assert_eq!(servers, "8.8.8.8,10.20.0.53");
-        assert_eq!(routes, vec!["8.8.8.8/32", "10.20.0.53/32"]);
+        assert_eq!(config.servers, "8.8.8.8,10.20.0.53");
+        assert_eq!(config.split_servers, vec!["10.20.0.53"]);
+        assert_eq!(config.routes, vec!["8.8.8.8/32", "10.20.0.53/32"]);
     }
 
     #[test]
     fn netstack_dns_deduplicates_and_skips_unusable_ipv6() {
-        let (servers, routes) =
-            netstack_dns_config("8.8.8.8,2001:4860:4860::8888", "8.8.8.8", false);
+        let config = netstack_dns_config("8.8.8.8,2001:4860:4860::8888", "8.8.8.8", None, false);
 
-        assert_eq!(servers, "8.8.8.8");
-        assert_eq!(routes, vec!["8.8.8.8/32"]);
+        assert_eq!(config.servers, "8.8.8.8");
+        assert!(config.split_servers.is_empty());
+        assert_eq!(config.routes, vec!["8.8.8.8/32"]);
+    }
+
+    #[test]
+    fn central_dns_is_preferred_for_split_domains() {
+        let central = RespCentralDns {
+            dnat_ip: "100.64.0.53".to_string(),
+        };
+        let config = netstack_dns_config("8.8.8.8", "", Some(&central), false);
+
+        assert_eq!(config.split_servers, vec!["100.64.0.53"]);
+        assert_eq!(config.routes, vec!["8.8.8.8/32", "100.64.0.53/32"]);
+    }
+
+    #[test]
+    fn public_central_dns_is_not_used_for_split_domains() {
+        let central = RespCentralDns {
+            dnat_ip: "8.8.8.8".to_string(),
+        };
+        let config = netstack_dns_config("8.8.8.8", "", Some(&central), false);
+
+        assert!(config.split_servers.is_empty());
+    }
+
+    #[test]
+    fn dynamic_dns_addresses_add_tunnel_host_routes() {
+        let mut policy = NetstackDnsPolicy::default();
+        policy.exact_v4.insert(
+            "internal.example.com".to_string(),
+            vec!["10.0.0.10/24".to_string()],
+        );
+        policy.exact_v6.insert(
+            "v6.internal.example.com".to_string(),
+            vec!["fd00::10/128".to_string()],
+        );
+
+        assert_eq!(dynamic_dns_routes(&policy, false), vec!["10.0.0.10/32"]);
+        assert_eq!(
+            dynamic_dns_routes(&policy, true),
+            vec!["10.0.0.10/32", "fd00::10/128"]
+        );
     }
 
     #[test]

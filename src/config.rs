@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
 use std::fs::OpenOptions;
@@ -552,6 +553,36 @@ mod tests {
         assert!(health.validate().is_ok());
         assert_eq!(health.interval_seconds, 300);
     }
+
+    #[test]
+    fn dynamic_dns_records_are_normalized_and_prefer_exact_matches() {
+        let mut policy = NetstackDnsPolicy::default();
+        policy.exact_v4.insert(
+            "host.internal.example.com".to_string(),
+            vec!["10.0.0.10/32".to_string()],
+        );
+        policy.wildcard_v4.insert(
+            "internal.example.com".to_string(),
+            vec!["10.0.0.11".to_string()],
+        );
+
+        assert_eq!(
+            policy.dynamic_addresses("HOST.INTERNAL.EXAMPLE.COM."),
+            Some(vec!["10.0.0.10".parse().unwrap()])
+        );
+    }
+
+    #[test]
+    fn split_dns_suffixes_match_apex_and_subdomains_only() {
+        let policy = NetstackDnsPolicy {
+            split_domains: vec!["*.internal.example.com".to_string()],
+            ..NetstackDnsPolicy::default()
+        };
+
+        assert!(policy.matches_split_domain("internal.example.com"));
+        assert!(policy.matches_split_domain("host.internal.example.com"));
+        assert!(!policy.matches_split_domain("notinternal.example.com"));
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -570,7 +601,81 @@ pub struct WgConf {
     // extra confs
     pub dns: String,
     pub dns_domains: Vec<String>,
+    pub dns_policy: NetstackDnsPolicy,
 
     // corplink confs
     pub protocol: i32,
+}
+
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetstackDnsPolicy {
+    pub split_domains: Vec<String>,
+    pub split_dns_servers: Vec<String>,
+    pub exact_v4: BTreeMap<String, Vec<String>>,
+    pub exact_v6: BTreeMap<String, Vec<String>>,
+    pub wildcard_v4: BTreeMap<String, Vec<String>>,
+    pub suffix_v4: BTreeMap<String, Vec<String>>,
+}
+
+impl NetstackDnsPolicy {
+    pub fn matches_split_domain(&self, host: &str) -> bool {
+        let host = normalize_dns_name(host);
+        self.split_domains.iter().any(|suffix| {
+            let suffix = normalize_dns_name(suffix);
+            !suffix.is_empty() && (host == suffix || host.ends_with(&format!(".{suffix}")))
+        })
+    }
+
+    pub fn dynamic_addresses(&self, host: &str) -> Option<Vec<std::net::IpAddr>> {
+        let host = normalize_dns_name(host);
+        if self.exact_v4.contains_key(&host) || self.exact_v6.contains_key(&host) {
+            let values = self
+                .exact_v4
+                .get(&host)
+                .into_iter()
+                .chain(self.exact_v6.get(&host))
+                .flatten();
+            return Some(dynamic_values_to_addresses(values));
+        }
+        for records in [&self.wildcard_v4, &self.suffix_v4] {
+            if let Some((_, values)) = records
+                .iter()
+                .filter(|(suffix, _)| dns_suffix_matches(&host, suffix))
+                .max_by_key(|(suffix, _)| normalize_dns_name(suffix).len())
+            {
+                return Some(dynamic_values_to_addresses(values));
+            }
+        }
+        None
+    }
+}
+
+fn dynamic_values_to_addresses<'a>(
+    values: impl IntoIterator<Item = &'a String>,
+) -> Vec<std::net::IpAddr> {
+    let mut addresses = Vec::new();
+    for value in values {
+        let value = value.split('/').next().unwrap_or(value).trim();
+        if let Ok(address) = value.parse() {
+            if !addresses.contains(&address) {
+                addresses.push(address);
+            }
+        }
+    }
+    addresses
+}
+
+pub(crate) fn normalize_dns_name(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(['\"', '\''])
+        .trim_start_matches("*.")
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn dns_suffix_matches(host: &str, suffix: &str) -> bool {
+    let suffix = normalize_dns_name(suffix);
+    !suffix.is_empty() && (host == suffix || host.ends_with(&format!(".{suffix}")))
 }

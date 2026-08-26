@@ -207,6 +207,10 @@ Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway b
 
 `health_check` is optional; missing configuration or `enabled: false` preserves the existing behavior. Checks start only after VPN/SOCKS5 is ready, automatically select a usable target from the server-provided `vpn_dns_domain_split` list, and separately verify Feilian DNS, WireGuard `AllowedIPs`, and TCP/TLS/HTTP reachability. HTTP statuses such as 401, 403, and 404 still count as reachable. Health-check DNS uses only Feilian-provided resolvers and never falls back to system or public DNS.
 
+SOCKS5/netstack 会保留服务端返回的动态域名记录，并将对应地址加入隧道路由。匹配企业域名名单的查询优先使用动态记录；没有匹配记录时只查询服务端明确提供的内网解析器，不会回退到 `8.8.8.8` 等公网 DNS。如果服务端没有提供可用的动态记录或内网解析器，请求会失败关闭，避免把 `internal.example.com` 等内网域名发送到公网。
+
+SOCKS5/netstack retains server-provided dynamic DNS records and adds their addresses to tunnel routes. Matching enterprise domains use those records first; when no record matches, only an explicitly provided internal resolver is queried, never a public fallback such as `8.8.8.8`. If neither usable dynamic records nor an internal resolver is available, the request fails closed instead of sending a name such as `internal.example.com` to public DNS.
+
 ```json
 {
   "health_check": {

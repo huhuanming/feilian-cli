@@ -33,6 +33,7 @@ fn start_wg_netstack(
     protocol: i32,
     addresses: &str,
     dns: &str,
+    dns_policy: &str,
     socks_listen: &str,
     socks_user: &str,
     socks_pass: &str,
@@ -40,6 +41,7 @@ fn start_wg_netstack(
 ) -> Result<i32> {
     let c_addresses = CString::new(addresses).context("addresses contains null character")?;
     let c_dns = CString::new(dns).context("dns contains null character")?;
+    let c_dns_policy = CString::new(dns_policy).context("dns policy contains null character")?;
     let c_socks = CString::new(socks_listen).context("socks_listen contains null character")?;
     let c_user = CString::new(socks_user).context("socks_user contains null character")?;
     let c_pass = CString::new(socks_pass).context("socks_pass contains null character")?;
@@ -49,12 +51,26 @@ fn start_wg_netstack(
             protocol,
             c_addresses.as_ptr(),
             c_dns.as_ptr(),
+            c_dns_policy.as_ptr(),
             c_socks.as_ptr(),
             c_user.as_ptr(),
             c_pass.as_ptr(),
             mtu,
         ))
     }
+}
+
+fn update_wg_netstack_dns(conf: &config::WgConf) -> Result<()> {
+    let c_dns = CString::new(conf.dns.as_str()).context("dns contains null character")?;
+    let policy = serde_json::to_string(&conf.dns_policy).context("failed to encode dns policy")?;
+    let c_dns_policy = CString::new(policy).context("dns policy contains null character")?;
+    let ret = unsafe { libwg::updateWgNetstackDNS(c_dns.as_ptr(), c_dns_policy.as_ptr()) };
+    if !matches!(ret, 0) {
+        return Err(anyhow!(
+            "update_wg_netstack_dns returned non-zero code: {ret}"
+        ));
+    }
+    Ok(())
 }
 
 fn uapi(buff: &[u8]) -> Result<Vec<u8>> {
@@ -107,11 +123,14 @@ pub fn start_wg_go_netstack(
         addrs.push(conf.address6.clone());
     }
     let addresses = addrs.join(",");
+    let dns_policy =
+        serde_json::to_string(&conf.dns_policy).context("failed to encode dns policy")?;
     let ret = start_wg_netstack(
         log_level,
         conf.protocol,
         &addresses,
         &conf.dns,
+        &dns_policy,
         socks_listen,
         socks_user,
         socks_pass,
@@ -142,6 +161,7 @@ impl TunnelRuntime {
         if self.netstack_mode {
             // The embedded SOCKS listener is process-lifetime state. Refreshing
             // the WireGuard peer in place avoids orphaning that listener.
+            update_wg_netstack_dns(conf).context("failed to refresh netstack DNS state")?;
             return uapi
                 .config_wg_netstack(conf)
                 .await
@@ -170,13 +190,21 @@ impl TunnelRuntime {
                     "refreshed VPN configuration changes fixed netstack parameters"
                 ));
             }
+            update_wg_netstack_dns(refreshed)
+                .context("failed to apply refreshed netstack DNS state")?;
             let mut uapi = UAPIClient {
                 name: self.name.clone(),
             };
-            return uapi
+            let result = uapi
                 .config_wg_netstack(refreshed)
                 .await
                 .context("failed to apply refreshed netstack WireGuard state");
+            if result.is_err() {
+                if let Err(error) = update_wg_netstack_dns(current) {
+                    log::warn!("failed to restore previous netstack DNS state: {error}");
+                }
+            }
+            return result;
         }
 
         stop_wg_go();
@@ -219,7 +247,6 @@ fn netstack_runtime_compatible(current: &config::WgConf, refreshed: &config::WgC
     current.address == refreshed.address
         && current.address6 == refreshed.address6
         && current.mtu == refreshed.mtu
-        && current.dns == refreshed.dns
         && current.protocol == refreshed.protocol
 }
 
@@ -403,6 +430,7 @@ mod tests {
             routes: vec!["10.0.0.0/8".to_string()],
             dns: "10.0.0.53".to_string(),
             dns_domains: vec!["internal.example.com".to_string()],
+            dns_policy: config::NetstackDnsPolicy::default(),
             protocol: 0,
         }
     }
@@ -420,15 +448,21 @@ mod tests {
     }
 
     #[test]
+    fn netstack_refresh_accepts_dns_changes() {
+        let current = conf();
+        let mut refreshed = current.clone();
+        refreshed.dns = "10.0.0.54".to_string();
+        refreshed.dns_policy.split_dns_servers = vec!["10.0.0.54".to_string()];
+
+        assert!(netstack_runtime_compatible(&current, &refreshed));
+    }
+
+    #[test]
     fn netstack_refresh_rejects_fixed_parameter_changes() {
         let current = conf();
         for refreshed in [
             config::WgConf {
                 address: "10.0.0.3/32".to_string(),
-                ..current.clone()
-            },
-            config::WgConf {
-                dns: "10.0.0.54".to_string(),
                 ..current.clone()
             },
             config::WgConf {

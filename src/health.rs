@@ -368,7 +368,15 @@ async fn check_health_targets(
     path: &HealthPath,
     targets: &mut HealthTargetPool,
 ) -> std::result::Result<TargetCheckResult, CheckFailure> {
-    let discovered = discovered_targets(&wg_conf.dns_domains);
+    let discovered = discovered_targets(
+        wg_conf
+            .dns_domains
+            .iter()
+            .chain(wg_conf.dns_policy.exact_v4.keys())
+            .chain(wg_conf.dns_policy.exact_v6.keys())
+            .chain(wg_conf.dns_policy.wildcard_v4.keys())
+            .chain(wg_conf.dns_policy.suffix_v4.keys()),
+    );
     let mut first_failure = None;
     let selected = targets
         .selected
@@ -423,10 +431,10 @@ async fn check_health_targets(
     }
 }
 
-fn discovered_targets(domains: &[String]) -> Vec<Url> {
+fn discovered_targets<'a>(domains: impl IntoIterator<Item = &'a String>) -> Vec<Url> {
     let mut seen = HashSet::new();
     domains
-        .iter()
+        .into_iter()
         .filter_map(|domain| discovered_target(domain))
         .filter(|target| seen.insert(target.clone()))
         .take(MAX_DISCOVERED_TARGETS)
@@ -506,8 +514,22 @@ async fn resolve_through_vpn_dns(
         return Ok(vec![address]);
     }
 
-    let dns_servers = wg_conf
-        .dns
+    if let Some(mut addresses) = wg_conf.dns_policy.dynamic_addresses(host) {
+        if wg_conf.address6.is_empty() {
+            addresses.retain(IpAddr::is_ipv4);
+        }
+        return (!addresses.is_empty())
+            .then_some(addresses)
+            .ok_or(FailureCategory::Dns);
+    }
+
+    let split_domain = wg_conf.dns_policy.matches_split_domain(host);
+    let configured_servers = if split_domain {
+        wg_conf.dns_policy.split_dns_servers.join(",")
+    } else {
+        wg_conf.dns.clone()
+    };
+    let dns_servers = configured_servers
         .split(',')
         .filter_map(|value| value.trim().parse::<IpAddr>().ok())
         .collect::<Vec<_>>();
@@ -882,7 +904,7 @@ fn fallback_url() -> Url {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HealthCheckTarget;
+    use crate::config::{HealthCheckTarget, NetstackDnsPolicy};
     use tokio::net::TcpListener;
 
     fn config() -> HealthCheckConfig {
@@ -1200,6 +1222,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dynamic_health_dns_records_avoid_upstream_resolvers() {
+        let mut wg_conf = test_wg_conf();
+        wg_conf.dns = "8.8.8.8".to_string();
+        wg_conf.dns_policy.exact_v4.insert(
+            "internal.example.com".to_string(),
+            vec!["10.0.0.10/32".to_string()],
+        );
+
+        assert_eq!(
+            resolve_through_vpn_dns(&config(), &wg_conf, &direct_path(), "internal.example.com")
+                .await,
+            Ok(vec!["10.0.0.10".parse().unwrap()])
+        );
+    }
+
+    #[tokio::test]
+    async fn split_health_dns_does_not_fall_back_to_public_resolvers() {
+        let mut wg_conf = test_wg_conf();
+        wg_conf.dns = "8.8.8.8".to_string();
+        wg_conf.dns_policy.split_domains = vec!["internal.example.com".to_string()];
+        wg_conf.dns_policy.split_dns_servers.clear();
+
+        assert_eq!(
+            resolve_through_vpn_dns(&config(), &wg_conf, &direct_path(), "internal.example.com")
+                .await,
+            Err(FailureCategory::Dns)
+        );
+    }
+
+    #[tokio::test]
     async fn discovery_failures_do_not_recover_until_a_target_was_selected() {
         let mut config = config();
         config.targets.clear();
@@ -1234,6 +1286,7 @@ mod tests {
             routes: vec!["10.0.0.0/8".to_string()],
             dns: "10.0.0.53".to_string(),
             dns_domains: Vec::new(),
+            dns_policy: NetstackDnsPolicy::default(),
             protocol: 0,
         }
     }
