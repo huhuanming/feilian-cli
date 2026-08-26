@@ -52,6 +52,24 @@ Verify the installed version:
 feilian-cli --version
 ```
 
+## 更新日志 / Changelog
+
+### 未发布 / Unreleased
+
+- 修复 SOCKS5/netstack 内网域名解析：保留服务端动态域名记录并自动加入隧道路由；企业域名只使用动态记录或服务端内网解析器，不再回退到 `8.8.8.8` 等公网 DNS。
+- DNS 与 WireGuard/netstack 状态可在自动恢复时原地刷新，不替换现有 SOCKS5 监听器；没有可用内网解析路径时会安全失败。
+
+- Fixed private-domain resolution in SOCKS5/netstack mode. Server-provided dynamic records are retained and routed through the tunnel; enterprise domains use only those records or an internal resolver, never a public fallback such as `8.8.8.8`.
+- DNS and WireGuard/netstack state can now refresh in place during recovery without replacing the SOCKS5 listener. Requests fail closed when no internal resolution path is available.
+
+### 1.0.3 — 2026-08-26
+
+- 增加连接自检与有限自动自愈，区分 DNS、隧道路由、TCP/TLS 和 HTTP 可达性；HTTP 401、403、404 仍视为链路可达。
+- 登录后自动从服务端域名名单选择健康检查候选，默认每 5 分钟检查；认证失效、限流或超过恢复次数时停止自动重试。
+
+- Added connection health checks and bounded recovery across DNS, tunnel routing, TCP/TLS, and HTTP reachability. HTTP 401, 403, and 404 responses still count as reachable.
+- Health targets are selected automatically from the server-provided domain list after login and checked every five minutes by default. Automatic retries stop on expired authentication, rate limiting, or the recovery-attempt limit.
+
 ## 首次使用 / First run
 
 ```sh
