@@ -54,6 +54,14 @@ feilian-cli --version
 
 ## 更新日志 / Changelog
 
+### 1.0.6 — 2026-08-28
+
+- 修复 WireGuard TCP 传输接收缓冲区过早复用造成的数据竞争与吞吐下降，并拒绝超长帧以避免异常输入触发越界。
+- 通过 vectored write 合并同批 TCP 帧头和载荷，并使用有界的 8 帧接收批次，改善 SOCKS5/netstack 路径的持续下载速度与 CPU 效率，同时限制缓冲内存占用。
+
+- Fixed premature WireGuard TCP receive-buffer reuse that caused a data race and severe throughput degradation, and reject oversized frames before they can trigger an out-of-bounds access.
+- Coalesced batched TCP frame headers and payloads with vectored writes and added bounded eight-frame receive batching, improving sustained download throughput and CPU efficiency on the SOCKS5/netstack path while limiting buffered memory.
+
 ### 1.0.5 — 2026-08-26
 
 - 修复服务端 DNS 被按地址类型错误过滤的问题：主 DNS、备用 DNS 和中央 DNAT DNS 只要由服务端下发且地址有效，都会用于内网域名解析。
