@@ -237,13 +237,17 @@ This project targets Feilian/CorpLink enterprise tenants and is not tied to one 
 ## 安全与隐私 / Security and privacy
 
 - npm 包不包含企业名称、账号、Cookie、Token、证书、私钥或内网域名。
-- 登录会话和生成的配置保存在本机，请像保护企业 VPN 凭据一样保护它们。
-- 不要把 `feilian-cli.config.json`、Cookie 文件、日志中的敏感字段或动态验证码提交到 GitHub。
+- JSON 配置只保存非秘密设置，不会写入密码、TOTP seed、WireGuard 私钥、SOCKS5 密码或会话 token。macOS 使用原生 Keychain；Linux/Windows 仅保存在当前进程内存，重启后重新 QR/MFA。
+- 旧配置和 `*_cookies.json` 中的明文秘密不会迁移或继续使用，而会被忽略并清理，登录状态重置。Keychain 不可用时 macOS 也只降级到内存，绝不回退明文文件。
+- 当前二进制未签名，macOS 首次访问 Keychain 或二进制更新后可能显示访问提示。当前正常流程没有安全录入 `password` / `socks5_password` 的入口；旧明文清除后，密码型登录和 SOCKS5 RFC1929 认证暂不可用，除非未来增加安全输入能力或 Keychain 已有本版本格式的相应字段。
+- 不要把 `feilian-cli.config.json`、日志中的敏感字段或动态验证码提交到 GitHub。
 - 建议只监听本机地址（例如 `127.0.0.1:11080`）；除非明确配置了认证和防火墙，否则不要把 SOCKS5 暴露到局域网或公网。
 
 - The npm package contains no enterprise name, account, cookie, token, certificate, private key, or internal domain.
-- Login sessions and generated configuration stay on the local machine and should be protected like enterprise VPN credentials.
-- Never commit `feilian-cli.config.json`, cookie files, sensitive log fields, or one-time codes to GitHub.
+- JSON configuration contains only non-secret settings; passwords, TOTP seeds, WireGuard private keys, SOCKS5 passwords, and session tokens are not written there. macOS uses native Keychain, while Linux/Windows keep them only in process memory and require QR/MFA after restart.
+- Plaintext secrets from older config and `*_cookies.json` files are ignored and removed rather than migrated. Keychain failure falls back to process memory, never a plaintext file.
+- The current binary is unsigned, so macOS may display a Keychain prompt on first access or after an update. The normal flow has no secure input path for `password` or `socks5_password`; after legacy plaintext is removed, password login and SOCKS5 RFC1929 are unavailable unless a future secure input path is added or this version's Keychain format already contains the matching field.
+- Never commit `feilian-cli.config.json`, sensitive log fields, or one-time codes to GitHub.
 - Prefer a loopback listener such as `127.0.0.1:11080`. Do not expose SOCKS5 to a LAN or the internet without deliberate authentication and firewall controls.
 
 ## 致谢 / Acknowledgements

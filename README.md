@@ -290,12 +290,20 @@ No. If the update check or npm installation fails, the launcher starts the curre
 
 ## 安全说明 / Security
 
-- 配置、Cookie、会话和 WireGuard 密钥仅保存在本机；不要提交到 GitHub。
+- JSON 配置只保存非秘密设置；不会写入账号密码、TOTP seed、WireGuard 私钥、SOCKS5 密码、Cookie、CSRF 或 VPN token。
+- macOS 使用原生 Keychain 通用密码项保存版本化的会话/秘密 bundle。当前二进制未签名，首次访问或二进制更新后，macOS 可能显示 Keychain 访问提示。
+- Linux 和 Windows 仅在当前进程内存中保存认证秘密；程序重启后需要重新 QR/MFA。Keychain 不可用时，macOS 也按相同行为降级到内存，不会回退到明文文件。
+- 升级时不会迁移旧配置或 `*_cookies.json` 中的明文秘密：它们会被忽略并清理，登录状态重置为 `Init`。默认 `feilian_qr` + Push MFA 流程可重新认证。
+- 当前正常流程没有安全录入 `password` / `socks5_password` 的入口；旧明文被清除后，密码型登录和 SOCKS5 RFC1929 认证暂不可用。只有未来增加安全输入能力，或 Keychain 已有本版本格式写入的相应字段时才可能使用；普通流程目前不会产生这些字段。
 - SOCKS5 建议只监听 `127.0.0.1`，不要直接暴露到局域网或公网。
 - 不要在日志、Issue 或截图中公开企业账号、Token、Cookie、验证码、证书和内网地址。
 - 本工具不提供认证绕过；所有访问权限仍由企业飞连服务端决定。
 
-- Configuration, cookies, sessions, and WireGuard keys remain local. Never commit them to GitHub.
+- JSON configuration stores only non-secret settings. Account passwords, TOTP seeds, WireGuard private keys, SOCKS5 passwords, cookies, CSRF values, and VPN tokens are never written there.
+- On macOS, a versioned session/secret bundle is stored as a native Keychain generic-password item. The current binary is unsigned, so macOS may show a Keychain access prompt on first access or after a binary update.
+- Linux and Windows keep authentication secrets in process memory only and require QR/MFA again after restart. If Keychain is unavailable, macOS also falls back to memory for that process and never to a plaintext file.
+- Plaintext secrets from an older config or `*_cookies.json` are not migrated: they are ignored and removed, and state is reset to `Init`. The default `feilian_qr` plus Push MFA flow can authenticate again.
+- The normal flow currently has no secure input path for `password` or `socks5_password`; after legacy plaintext is removed, password login and SOCKS5 RFC1929 authentication are temporarily unavailable. They require a future secure input path or a matching field already stored in this version's Keychain format, which the normal flow does not currently create.
 - Bind SOCKS5 to `127.0.0.1`; do not expose it directly to a LAN or the public Internet.
 - Never publish enterprise accounts, tokens, cookies, verification codes, certificates, or private addresses in logs, issues, or screenshots.
 - This tool does not bypass authentication. Access remains controlled by the enterprise Feilian server.

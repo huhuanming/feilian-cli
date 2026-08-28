@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use std::{fs, io};
 
 use anyhow::{anyhow, bail, Context, Result};
 use cookie_store::CookieStore;
@@ -27,6 +26,7 @@ use tokio_tungstenite::tungstenite::http::{
 };
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, WebSocketStream};
+use zeroize::Zeroize;
 
 use crate::api::{corplink_user_agent, ApiName, ApiUrl, URL_GET_COMPANY};
 use crate::config::{
@@ -40,7 +40,6 @@ use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
-const COOKIE_FILE_SUFFIX: &str = "cookies.json";
 const SIGN_ROOT_KEY_VERSION: u64 = 1;
 const SIGN_SECRET: &[u8] = b"TOK@@AoNfRIX+3bla%";
 const SIGN_HASH_BLOCK_SIZE: usize = 64;
@@ -849,33 +848,37 @@ impl Client {
         ))
     }
 
-    pub fn new(conf: Config) -> Result<Client> {
-        let f = conf.conf_file.clone().context("config file path missing")?;
-        let interface_name = conf
-            .interface_name
-            .clone()
-            .context("interface name missing in config")?;
-        let dir = match path::Path::new(&f).parent() {
-            Some(dir) => dir,
-            None => path::Path::new("."),
-        };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
-        log::info!("cookie file is: {}", cookie_file.to_string_lossy());
-
+    pub fn new(mut conf: Config) -> Result<Client> {
         let needs_fresh_login = matches!(conf.state.as_ref(), None | Some(State::Init));
         let cookie_store = if needs_fresh_login {
+            conf.secret_store.clear_session();
             CookieStore::default()
         } else {
-            let file = fs::File::open(&cookie_file).map(io::BufReader::new);
-            match file {
-                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|e| {
-                    log::warn!(
-                        "failed to load cookie store from {}, using empty store: {e}",
-                        cookie_file.display()
-                    );
+            match conf.secret_store.cookies_json() {
+                Some(mut data) => {
+                    let loaded = CookieStore::load_json(io::Cursor::new(data.as_bytes()));
+                    data.zeroize();
+                    match loaded {
+                        Ok(store) if store.iter_unexpired().next().is_some() => store,
+                        Ok(_) => {
+                            conf.secret_store.clear_session();
+                            conf.state = Some(State::Init);
+                            CookieStore::default()
+                        }
+                        Err(_) => {
+                            log::warn!(
+                                "secure session data is invalid; starting with fresh authentication"
+                            );
+                            conf.secret_store.clear_session();
+                            conf.state = Some(State::Init);
+                            CookieStore::default()
+                        }
+                    }
+                }
+                None => {
+                    conf.state = Some(State::Init);
                     CookieStore::default()
-                }),
-                Err(_) => CookieStore::default(),
+                }
             }
         };
         let has_expired = cookie_store.iter_any().any(|cookie| cookie.is_expired());
@@ -909,13 +912,13 @@ impl Client {
             .default_headers(headers)
             .build()
             .context("build http client")?;
-        let conf_bak = conf.clone();
+        let api_url = ApiUrl::new(&conf)?;
         Ok(Client {
             conf,
             cookie: Arc::clone(&cookie_store),
             c,
             probe_client,
-            api_url: ApiUrl::new(&conf_bak)?,
+            api_url,
             date_offset_sec: 0,
             vpn_push_events: None,
             vpn_push_task: None,
@@ -931,39 +934,36 @@ impl Client {
     }
 
     fn save_cookie(&self) -> Result<()> {
-        let f = self
-            .conf
-            .conf_file
-            .as_ref()
-            .context("config file path missing")?;
-        let interface_name = self
-            .conf
-            .interface_name
-            .as_ref()
-            .context("interface name missing in config")?;
-        let dir = match path::Path::new(f).parent() {
-            Some(dir) => dir,
-            None => path::Path::new("."),
-        };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(false)
-            .open(&cookie_file)
-            .map(io::BufWriter::new)
-            .with_context(|| {
-                format!(
-                    "failed to open cookie file for writing: {}",
-                    cookie_file.display()
-                )
-            })?;
         let c = self
             .cookie
             .lock()
             .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
-        c.save_json(&mut file)
-            .or_else(|e| bail!("failed to persist cookies to disk: {e}"))?;
+        let mut data = Vec::new();
+        if c.save_json(&mut data).is_err() {
+            data.zeroize();
+            return Err(anyhow!("failed to serialize secure session data"));
+        }
+        drop(c);
+        let data = match String::from_utf8(data) {
+            Ok(data) => data,
+            Err(error) => {
+                let mut data = error.into_bytes();
+                data.zeroize();
+                return Err(anyhow!("failed to serialize secure session data"));
+            }
+        };
+        self.conf.secret_store.update_cookies(data);
+        Ok(())
+    }
+
+    fn clear_local_session(&self) -> Result<()> {
+        let mut cookie_store = self
+            .cookie
+            .lock()
+            .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+        cookie_store.clear();
+        drop(cookie_store);
+        self.conf.secret_store.clear_session();
         Ok(())
     }
 
@@ -1960,22 +1960,16 @@ impl Client {
     }
 
     async fn handle_logout_err(&mut self, msg: String) -> Result<()> {
-        if self.automatic_recovery {
-            return Err(RecoveryAuthenticationRequired.into());
-        }
+        let automatic_recovery = self.automatic_recovery;
         self.stop_vpn_push_websocket();
-        {
-            let mut cookie_store = self
-                .cookie
-                .lock()
-                .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
-            cookie_store.clear();
-        }
-        self.save_cookie()
-            .context("failed to clear stale login cookies")?;
+        self.clear_local_session()
+            .context("failed to clear stale login session")?;
         self.change_state(State::Init)
             .await
             .context("failed to reset state after logout")?;
+        if automatic_recovery {
+            return Err(RecoveryAuthenticationRequired.into());
+        }
         bail!("operation failed because of logout: {msg}")
     }
 
@@ -2910,8 +2904,17 @@ impl Client {
         }
         // the endpoint replies with a 302 redirect (not JSON), so just confirm
         // the request went through instead of parsing a response body.
-        let resp = req.send().await.context("logout request failed")?;
-        log::info!("logout (current terminal) status: {}", resp.status());
+        let remote_result = req.send().await;
+        if let Ok(resp) = &remote_result {
+            log::info!("logout (current terminal) status: {}", resp.status());
+        }
+        self.stop_vpn_push_websocket();
+        self.clear_local_session()
+            .context("failed to clear local login session")?;
+        self.change_state(State::Init)
+            .await
+            .context("failed to reset state after logout")?;
+        remote_result.context("logout request failed")?;
         Ok(())
     }
 }
@@ -2943,6 +2946,7 @@ mod tests {
     use crate::api::{ApiName, ApiUrl};
     use crate::config::{Config, NetstackDnsPolicy, RouteMode};
     use crate::resp::{RespCentralDns, RespVpnInfo, RespVpnMfaType};
+    use crate::secrets::SecretStore;
     use crate::utils::apply_route_filters;
 
     #[test]
@@ -3254,6 +3258,106 @@ mod tests {
                 .into_owned(),
         );
         Client::new(conf).unwrap()
+    }
+
+    #[test]
+    fn saving_session_never_creates_a_legacy_cookie_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let interface_name = format!("corplink-cookie-test-{unique}");
+        let config_path = std::env::temp_dir().join(format!("corplink-cookie-test-{unique}.json"));
+        let legacy_cookie_path =
+            std::env::temp_dir().join(format!("{interface_name}_cookies.json"));
+        let mut conf: Config = serde_json::from_value(json!({
+            "company_name": "test",
+            "username": "test",
+            "server": "https://vpn.example.com",
+            "interface_name": interface_name,
+            "device_id": "synthetic-device",
+            "device_name": "Test Device",
+            "state": "Login"
+        }))
+        .unwrap();
+        conf.conf_file = Some(config_path.to_string_lossy().into_owned());
+        let client = Client::new(conf).unwrap();
+        let server = Url::parse("https://vpn.example.com").unwrap();
+        client
+            .cookie
+            .lock()
+            .unwrap()
+            .insert_raw(
+                &RawCookie::build("session", "synthetic-session")
+                    .max_age(cookie::time::Duration::hours(1))
+                    .finish(),
+                &server,
+            )
+            .unwrap();
+
+        client.save_cookie().unwrap();
+
+        assert!(client.conf.secret_store.cookies_json().is_some());
+        assert!(!legacy_cookie_path.exists());
+        assert!(!config_path.exists());
+    }
+
+    #[test]
+    fn nonpersistent_cookie_remains_in_memory_only() {
+        let client = test_client();
+        let server = Url::parse("https://vpn.example.com").unwrap();
+        client
+            .cookie
+            .lock()
+            .unwrap()
+            .insert_raw(&RawCookie::new("session", "synthetic-session"), &server)
+            .unwrap();
+
+        client.save_cookie().unwrap();
+
+        assert!(client.conf.secret_store.cookies_json().is_none());
+        assert!(client
+            .cookie
+            .lock()
+            .unwrap()
+            .iter_unexpired()
+            .next()
+            .is_some());
+    }
+
+    #[test]
+    fn init_state_clears_a_residual_session_but_preserves_long_lived_secrets() {
+        let mut conf: Config = serde_json::from_value(json!({
+            "company_name": "test",
+            "username": "test",
+            "server": "https://vpn.example.com",
+            "interface_name": "synthetic-interface",
+            "device_id": "synthetic-device",
+            "device_name": "Test Device",
+            "state": "Init"
+        }))
+        .unwrap();
+        conf.conf_file = Some(
+            std::env::temp_dir()
+                .join("synthetic-residual-session-config.json")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        conf.secret_store = SecretStore::persistent_for_test("synthetic-residual-session");
+        assert!(conf.secret_store.update_config_secrets(
+            None,
+            Some("synthetic-totp"),
+            Some("synthetic-private-key"),
+            None,
+        ));
+
+        let client = Client::new(conf).unwrap();
+
+        assert!(client.cookie.lock().unwrap().iter_any().next().is_none());
+        assert!(client.conf.secret_store.cookies_json().is_none());
+        let (_, code, private_key, _) = client.conf.secret_store.config_secrets();
+        assert_eq!(code.as_deref(), Some("synthetic-totp"));
+        assert_eq!(private_key.as_deref(), Some("synthetic-private-key"));
     }
 
     #[test]

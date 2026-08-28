@@ -5,6 +5,7 @@ mod dns;
 mod health;
 mod qrcode;
 mod resp;
+mod secrets;
 mod state;
 mod template;
 mod totp;
@@ -169,6 +170,8 @@ async fn run() -> Result<()> {
     let mut conf = Config::from_file(&conf_file)
         .await
         .context("failed to load config")?;
+    conf.validate_runtime_secrets()
+        .context("secure credential requirements are not satisfied")?;
     let name = conf
         .interface_name
         .clone()
