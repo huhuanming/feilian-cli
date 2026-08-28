@@ -54,6 +54,16 @@ feilian-cli --version
 
 ## 更新日志 / Changelog
 
+### 1.0.7 — 2026-08-28
+
+- macOS 登录凭证、WireGuard/SOCKS 密钥和持久会话改存系统钥匙串；钥匙串不可用时仅在当前进程内保存并要求下次重新登录。
+- Linux 与 Windows 不再把这些敏感数据写入磁盘；旧版明文凭证和 Cookie 文件不会迁移，并会在首次运行新版时静默清除。
+- 敏感字段不再出现在解码错误信息中，且内存中的密钥副本在替换或释放时会清零。
+
+- Store macOS login credentials, WireGuard/SOCKS keys, and persistent sessions in Keychain; if Keychain is unavailable, keep them only for the current process and require login again next time.
+- Linux and Windows no longer write these secrets to disk. Legacy plaintext credentials and cookie files are not migrated and are silently removed on the first run of the new version.
+- Keep sensitive values out of decoding errors and zero in-memory secret copies when replaced or dropped.
+
 ### 1.0.6 — 2026-08-28
 
 - 修复 WireGuard TCP 传输接收缓冲区过早复用造成的数据竞争与吞吐下降，并拒绝超长帧以避免异常输入触发越界。
