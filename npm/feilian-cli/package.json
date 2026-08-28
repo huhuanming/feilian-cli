@@ -5,10 +5,10 @@
   "license": "GPL-2.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/huhuanming/corplink-rs.git"
+    "url": "git+https://github.com/huhuanming/feilian-cli.git"
   },
-  "homepage": "https://github.com/huhuanming/corplink-rs#readme",
-  "bugs": "https://github.com/huhuanming/corplink-rs/issues",
+  "homepage": "https://github.com/huhuanming/feilian-cli#readme",
+  "bugs": "https://github.com/huhuanming/feilian-cli/issues",
   "keywords": [
     "feilian",
     "corplink",

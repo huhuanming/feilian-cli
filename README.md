@@ -5,7 +5,7 @@
 [![npm total downloads](https://img.shields.io/npm/dt/feilian-cli?logo=npm&label=downloads)](https://www.npmjs.com/package/feilian-cli)
 [![npm package size](https://img.shields.io/npm/unpacked-size/feilian-cli?logo=npm&label=package%20size)](https://www.npmjs.com/package/feilian-cli)
 [![Node.js](https://img.shields.io/node/v/feilian-cli?logo=node.js&label=node)](https://www.npmjs.com/package/feilian-cli)
-[![GitHub release](https://img.shields.io/github/v/release/huhuanming/corplink-rs?label=release)](https://github.com/huhuanming/corplink-rs/releases/latest)
+[![GitHub release](https://img.shields.io/github/v/release/huhuanming/feilian-cli?label=release)](https://github.com/huhuanming/feilian-cli/releases/latest)
 [![platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安装--install)
 [![license](https://img.shields.io/npm/l/feilian-cli?label=license)](./license.txt)
 
@@ -44,17 +44,17 @@ npm install --global feilian-cli@latest
 > **Do not want to read the rest? You do not have to.** Give this README URL to ChatGPT, Claude, Codex, or another trusted AI assistant. Tell it your operating system and goal, then let it guide the installation, QR login, SOCKS5 setup, and Clash/Mihomo routing.
 
 ```text
-https://github.com/huhuanming/corplink-rs#readme
+https://github.com/huhuanming/feilian-cli#readme
 ```
 
 可直接复制的提示词 / Copyable prompt:
 
 ```text
-请阅读 https://github.com/huhuanming/corplink-rs#readme。
+请阅读 https://github.com/huhuanming/feilian-cli#readme。
 我的系统是 macOS/Linux/Windows。请帮我安装 feilian-cli，使用二维码登录，
 并根据我的企业域名和 CIDR 生成 Clash/Mihomo 分流配置。每一步执行前先解释用途。
 
-Read https://github.com/huhuanming/corplink-rs#readme.
+Read https://github.com/huhuanming/feilian-cli#readme.
 I use macOS/Linux/Windows. Help me install feilian-cli, sign in with the QR code,
 and generate Clash/Mihomo routing rules for my enterprise domains and CIDRs.
 Explain each command before running it.

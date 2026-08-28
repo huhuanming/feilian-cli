@@ -254,8 +254,8 @@ This project is forked from [PinkD/corplink-rs](https://github.com/PinkD/corplin
 
 ## 项目与许可证 / Project and license
 
-源码、问题反馈和构建说明：<https://github.com/huhuanming/corplink-rs>
+源码、问题反馈和构建说明：<https://github.com/huhuanming/feilian-cli>
 
-Source, issue tracker, and build instructions: <https://github.com/huhuanming/corplink-rs>
+Source, issue tracker, and build instructions: <https://github.com/huhuanming/feilian-cli>
 
 License: GPL-2.0-or-later.
