@@ -118,6 +118,7 @@ In TUN mode, the `Password:` prompt asks for the local administrator password ne
 ```bash
 feilian-cli                          # 默认配置 / default config
 feilian-cli /path/to/config.json     # 指定配置 / custom config
+feilian-cli --insecure               # 跳过全部证书及域名校验（仅本次） / skip all cert/hostname checks for this run
 feilian-cli --version                # 查看版本 / show version
 feilian-cli --check-update           # 只读检查 / read-only update check
 ```
@@ -307,19 +308,6 @@ No. If the update check or npm installation fails, the launcher starts the curre
 - Bind SOCKS5 to `127.0.0.1`; do not expose it directly to a LAN or the public Internet.
 - Never publish enterprise accounts, tokens, cookies, verification codes, certificates, or private addresses in logs, issues, or screenshots.
 - This tool does not bypass authentication. Access remains controlled by the enterprise Feilian server.
-
-### TLS 证书校验 / TLS certificate verification
-
-默认严格校验飞连 HTTPS 和推送 WebSocket 的证书与域名。需要临时跳过校验时，显式使用：
-
-```bash
-feilian-cli --insecure
-feilian-cli --insecure /path/to/config.json
-```
-
-`--insecure` 会跳过所有 TLS 证书和域名校验，**不限于证书过期**；网络、TLS 协议和 HTTP 错误仍会失败。该参数仅对本次启动生效，不写入配置。开启时控制台会显示警告；WebSocket 连接失败会输出完整错误原因。
-
-Feilian HTTPS and push WebSocket connections verify certificates and hostnames by default. `--insecure` skips **all certificate and hostname verification**, not just expiration checks. Network, TLS protocol, and HTTP errors still fail. The flag applies only to this invocation and is not saved in configuration. A warning is printed when enabled, and WebSocket connection failures include the full error chain. npm update checks continue to verify certificates.
 
 ## 致谢 / Acknowledgements
 

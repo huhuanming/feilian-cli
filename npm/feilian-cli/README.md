@@ -223,6 +223,7 @@ Run with an explicit configuration file:
 
 ```sh
 feilian-cli /path/to/config.json
+feilian-cli --insecure               # 跳过全部证书及域名校验（仅本次） / skip all cert/hostname checks for this run
 ```
 
 检查更新：
@@ -266,19 +267,6 @@ This project targets Feilian/CorpLink enterprise tenants and is not tied to one 
 - The current binary is unsigned, so macOS may display a Keychain prompt on first access or after an update. The normal flow has no secure input path for `password` or `socks5_password`; after legacy plaintext is removed, password login and SOCKS5 RFC1929 are unavailable unless a future secure input path is added or this version's Keychain format already contains the matching field.
 - Never commit `feilian-cli.config.json`, sensitive log fields, or one-time codes to GitHub.
 - Prefer a loopback listener such as `127.0.0.1:11080`. Do not expose SOCKS5 to a LAN or the internet without deliberate authentication and firewall controls.
-
-### TLS 证书校验 / TLS certificate verification
-
-默认严格校验飞连 HTTPS 和推送 WebSocket 的证书与域名。需要临时跳过校验时，显式使用：
-
-```bash
-feilian-cli --insecure
-feilian-cli --insecure /path/to/config.json
-```
-
-`--insecure` 会跳过所有 TLS 证书和域名校验，**不限于证书过期**；网络、TLS 协议和 HTTP 错误仍会失败。该参数仅对本次启动生效，不写入配置。开启时控制台会显示警告；WebSocket 连接失败会输出完整错误原因。
-
-Feilian HTTPS and push WebSocket connections verify certificates and hostnames by default. `--insecure` skips **all certificate and hostname verification**, not just expiration checks. Network, TLS protocol, and HTTP errors still fail. The flag applies only to this invocation and is not saved in configuration. A warning is printed when enabled, and WebSocket connection failures include the full error chain. npm update checks continue to verify certificates.
 
 ## 致谢 / Acknowledgements
 
