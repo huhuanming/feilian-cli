@@ -219,6 +219,9 @@ impl HealthCheckConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
+    /// Runtime-only: explicitly disable TLS certificate and hostname verification.
+    #[serde(skip)]
+    pub insecure: bool,
     pub company_name: String,
     pub username: String,
     #[serde(default, skip_serializing)]

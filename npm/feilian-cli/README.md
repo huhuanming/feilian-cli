@@ -8,6 +8,19 @@ An unofficial cross-platform CLI for Feilian/CorpLink enterprise tenants. Enter 
 >
 > This is an independent community project. It is not affiliated with or endorsed by Feilian. It does not bypass enterprise authentication, security policies, or access controls. Availability depends on the tenant's Feilian version and administrator policy.
 
+## TLS 证书校验 / TLS certificate verification
+
+默认严格校验飞连 HTTPS 和推送 WebSocket 的证书与域名。需要临时跳过校验时，显式使用：
+
+```bash
+feilian-cli --insecure
+feilian-cli --insecure /path/to/config.json
+```
+
+`--insecure` 会跳过所有 TLS 证书和域名校验，**不限于证书过期**；网络、TLS 协议和 HTTP 错误仍会失败。该参数仅对本次启动生效，不写入配置。开启时控制台会显示警告；WebSocket 连接失败会输出完整错误原因。
+
+Feilian HTTPS and push WebSocket connections verify certificates and hostnames by default. `--insecure` skips **all certificate and hostname verification**, not just expiration checks. Network, TLS protocol, and HTTP errors still fail. The flag applies only to this invocation and is not saved in configuration. A warning is printed when enabled, and WebSocket connection failures include the full error chain. npm update checks continue to verify certificates.
+
 ## 为什么使用 / Why use it
 
 - **第三方企业租户登录**：输入企业提供的飞连标识，CLI 自动发现对应服务；代码和 npm 包不写死任何公司、账号或内网信息。
@@ -53,6 +66,13 @@ feilian-cli --version
 ```
 
 ## 更新日志 / Changelog
+
+### 1.0.8 — 2026-10-09
+
+- 新增 `--insecure` 启动参数，明确跳过飞连 HTTPS 和推送 WebSocket 的全部证书与域名校验；默认严格校验。
+- 控制台显示跳过校验警告，并输出 WebSocket 连接失败的完整错误原因。
+- Add `--insecure` to skip all certificate and hostname verification for Feilian HTTPS and push WebSocket connections; verification is strict by default.
+- Print a warning when verification is skipped and the full error chain when a WebSocket connection fails.
 
 ### 1.0.7 — 2026-08-28
 

@@ -29,10 +29,12 @@ use anyhow::{anyhow, Context, Result};
 use client::Client;
 use config::{Config, WgConf};
 
+#[derive(Debug, PartialEq)]
 enum Command {
     Run {
         config_path: PathBuf,
         create_default: bool,
+        insecure: bool,
     },
     CheckUpdate,
     Help,
@@ -44,38 +46,47 @@ fn print_usage(name: &str) {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| format!("~/{}", config::DEFAULT_CONFIG_FILE_NAME));
     println!(
-        "usage:\n\t{name}\n\t{name} <config-path>\n\t{name} --check-update\n\t{name} --version\n\nDefault config:\n\t{default_config}"
+        "usage:\n\t{name}\n\t{name} [--insecure] [config-path]\n\t{name} --check-update\n\t{name} --version\n\n--insecure: skip ALL TLS certificate and hostname verification for Feilian connections.\n\nDefault config:\n\t{default_config}"
     );
 }
 
 fn parse_arg() -> Result<(String, Command)> {
     let mut args = env::args();
     let name = args.next().unwrap_or_else(|| String::from("feilian-cli"));
-    match args.len() {
-        0 => Ok((
-            name,
-            Command::Run {
-                config_path: config::default_config_path()?,
-                create_default: true,
-            },
-        )),
-        1 => {
-            let arg = args.next().unwrap();
-            match arg.as_str() {
-                "-h" | "--help" => Ok((name, Command::Help)),
-                "-V" | "--version" => Ok((name, Command::Version)),
-                "--check-update" => Ok((name, Command::CheckUpdate)),
-                _ => Ok((
-                    name,
-                    Command::Run {
-                        config_path: PathBuf::from(arg),
-                        create_default: false,
-                    },
-                )),
-            }
+    Ok((name, parse_command(args.collect())?))
+}
+
+fn parse_command(args: Vec<String>) -> Result<Command> {
+    if args.len() == 1 {
+        match args[0].as_str() {
+            "-h" | "--help" => return Ok(Command::Help),
+            "-V" | "--version" => return Ok(Command::Version),
+            "--check-update" => return Ok(Command::CheckUpdate),
+            _ => {}
         }
-        _ => Err(anyhow!("too many command-line arguments")),
     }
+    let mut insecure = false;
+    let mut config_path = None;
+    for arg in args {
+        if arg == "--insecure" && !insecure {
+            insecure = true;
+        } else if arg.starts_with('-') {
+            return Err(anyhow!("unknown or duplicate option: {arg}"));
+        } else if config_path.is_none() {
+            config_path = Some(PathBuf::from(arg));
+        } else {
+            return Err(anyhow!("too many config paths"));
+        }
+    }
+    let create_default = config_path.is_none();
+    Ok(Command::Run {
+        config_path: match config_path {
+            Some(path) => path,
+            None => config::default_config_path()?,
+        },
+        create_default,
+        insecure,
+    })
 }
 
 fn prompt(label: &str, required: bool) -> Result<String> {
@@ -129,7 +140,7 @@ async fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let (name, command) = parse_arg()?;
-    let (config_path, create_default) = match command {
+    let (config_path, create_default, insecure) = match command {
         Command::Help => {
             print_usage(&name);
             return Ok(());
@@ -148,7 +159,8 @@ async fn run() -> Result<()> {
         Command::Run {
             config_path,
             create_default,
-        } => (config_path, create_default),
+            insecure,
+        } => (config_path, create_default, insecure),
     };
 
     if create_default && initialize_default_config(&config_path)? {
@@ -172,6 +184,10 @@ async fn run() -> Result<()> {
         .context("failed to load config")?;
     conf.validate_runtime_secrets()
         .context("secure credential requirements are not satisfied")?;
+    conf.insecure = insecure;
+    if insecure {
+        eprintln!("WARNING: --insecure disables ALL TLS certificate and hostname verification for Feilian HTTPS and WebSocket connections; this is not limited to expired certificates.");
+    }
     let name = conf
         .interface_name
         .clone()
@@ -197,7 +213,7 @@ async fn run() -> Result<()> {
     let dns_backup_filename = conf.dns_backup_filename.clone();
 
     if conf.server.is_none() {
-        let resp = client::get_company_url(conf.company_name.as_str())
+        let resp = client::get_company_url(conf.company_name.as_str(), insecure)
             .await
             .with_context(|| {
                 format!(
@@ -448,4 +464,63 @@ fn print_version() {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
     log::info!("running {}@{}", pkg_name, pkg_version);
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn insecure_is_opt_in_and_accepts_either_argument_order() {
+        let path = PathBuf::from("config.json");
+        assert_eq!(
+            parse_command(vec!["config.json".into()]).unwrap(),
+            Command::Run {
+                config_path: path.clone(),
+                create_default: false,
+                insecure: false,
+            }
+        );
+        for args in [
+            vec!["--insecure", "config.json"],
+            vec!["config.json", "--insecure"],
+        ] {
+            assert_eq!(
+                parse_command(args.into_iter().map(str::to_owned).collect()).unwrap(),
+                Command::Run {
+                    config_path: path.clone(),
+                    create_default: false,
+                    insecure: true,
+                }
+            );
+        }
+        assert!(matches!(
+            parse_command(vec!["--insecure".into()]).unwrap(),
+            Command::Run {
+                create_default: true,
+                insecure: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_ambiguous_flags_and_extra_paths() {
+        for args in [
+            vec!["--ignore-cert-expiry"],
+            vec!["--insecure", "--insecure"],
+            vec!["a", "b"],
+            vec!["--insecure", "--version"],
+        ] {
+            assert!(parse_command(args.into_iter().map(str::to_owned).collect()).is_err());
+        }
+        assert_eq!(
+            parse_command(vec!["--version".into()]).unwrap(),
+            Command::Version
+        );
+        assert_eq!(
+            parse_command(vec!["--check-update".into()]).unwrap(),
+            Command::CheckUpdate
+        );
+    }
 }

@@ -1,11 +1,12 @@
 [package]
 name = "corplink-rs"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2021"
 
 [dependencies]
 regex = "1.10"
 reqwest = { version = "0.11", features = [
+    "native-tls",
     "json",
     "gzip",
     "deflate",
@@ -16,6 +17,7 @@ reqwest = { version = "0.11", features = [
 # reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies", "socks"] }
 tokio = { version = "1.37", features = ["full"] }
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+native-tls = "0.2"
 futures = "0.3"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

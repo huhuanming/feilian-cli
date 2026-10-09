@@ -25,7 +25,7 @@ use tokio_tungstenite::tungstenite::http::{
     header as websocket_header, HeaderValue as WebSocketHeaderValue, Request as WebSocketRequest,
 };
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{connect_async, WebSocketStream};
+use tokio_tungstenite::{connect_async_tls_with_config, Connector, WebSocketStream};
 use zeroize::Zeroize;
 
 use crate::api::{corplink_user_agent, ApiName, ApiUrl, URL_GET_COMPANY};
@@ -226,7 +226,7 @@ async fn maintain_vpn_push_websocket(
         if let Err(error) =
             pump_vpn_push_websocket(&mut websocket, &events, &mut received_ids).await
         {
-            log::warn!("VPN push WebSocket disconnected: {error}");
+            log::warn!("VPN push WebSocket disconnected: {error:#}");
         }
 
         let mut retry_delay = Duration::from_secs(1);
@@ -238,7 +238,7 @@ async fn maintain_vpn_push_websocket(
                     break;
                 }
                 Err(error) => {
-                    log::warn!("failed to reconnect VPN push WebSocket: {error}");
+                    log::warn!("failed to reconnect VPN push WebSocket: {error:#}");
                     retry_delay = (retry_delay * 2).min(Duration::from_secs(30));
                 }
             }
@@ -656,10 +656,10 @@ fn encode_sign_header(signing_input_params: u64, signing_result: &[u8]) -> Strin
     )
 }
 
-fn corplink_client_builder() -> ClientBuilder {
+fn corplink_client_builder(insecure: bool) -> ClientBuilder {
     ClientBuilder::new()
-        // CorpLink deployments may use certificates signed by their own CA.
-        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_certs(insecure)
+        .danger_accept_invalid_hostnames(insecure)
         // for debug
         // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
         .user_agent(corplink_user_agent())
@@ -683,6 +683,7 @@ type VpnPushWebSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio:
 
 #[derive(Clone)]
 struct VpnPushConnector {
+    insecure: bool,
     api_url: ApiUrl,
     cookie: Arc<CookieStoreMutex>,
     server_url: Url,
@@ -746,9 +747,19 @@ impl VpnPushConnector {
             cookie_names.dedup();
             log::info!("VPN push WebSocket handshake cookies: {cookie_names:?}");
         }
-        let (websocket, response) = connect_async(request)
-            .await
-            .context("failed to connect VPN push WebSocket")?;
+        let tls = native_tls::TlsConnector::builder()
+            .danger_accept_invalid_certs(self.insecure)
+            .danger_accept_invalid_hostnames(self.insecure)
+            .build()
+            .context("failed to build VPN push TLS connector")?;
+        let (websocket, response) = connect_async_tls_with_config(
+            request,
+            None,
+            false,
+            Some(Connector::NativeTls(tls)),
+        )
+        .await
+        .context("failed to connect VPN push WebSocket")?;
         log::info!(
             "VPN push WebSocket connected with status {}",
             response.status()
@@ -779,10 +790,10 @@ impl Drop for Client {
     }
 }
 
-pub async fn get_company_url(code: &str) -> anyhow::Result<RespCompany> {
+pub async fn get_company_url(code: &str, insecure: bool) -> anyhow::Result<RespCompany> {
     let c = ClientBuilder::new()
-        // allow invalid certs because this cert is signed by corplink
-        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_certs(insecure)
+        .danger_accept_invalid_hostnames(insecure)
         .build()
         .context("build client")?;
     let mut m = Map::new();
@@ -903,11 +914,11 @@ impl Client {
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
         // Keep probe responses out of the shared cookie store until an endpoint is selected.
-        let probe_client = corplink_client_builder()
+        let probe_client = corplink_client_builder(conf.insecure)
             .default_headers(headers.clone())
             .build()
             .context("build VPN probe HTTP client")?;
-        let c = corplink_client_builder()
+        let c = corplink_client_builder(conf.insecure)
             .cookie_provider(Arc::clone(&cookie_store))
             .default_headers(headers)
             .build()
@@ -2294,6 +2305,7 @@ impl Client {
         let server_url = self.server_url()?;
         let cookie_fingerprint = self.cookie_fingerprint_for_url(&server_url)?;
         let connector = VpnPushConnector {
+            insecure: self.conf.insecure,
             api_url: self.api_url.clone(),
             cookie: Arc::clone(&self.cookie),
             server_url,
@@ -2481,7 +2493,7 @@ impl Client {
         self.initialize_session_setting().await?;
         let vpn_info = self.list_vpn().await?;
         if let Err(error) = self.start_vpn_push_websocket().await {
-            log::warn!("FeiLian push WebSocket is unavailable: {error}");
+            log::warn!("FeiLian push WebSocket is unavailable: {error:#}");
         }
 
         log::info!(
@@ -2949,6 +2961,110 @@ mod tests {
     use crate::secrets::SecretStore;
     use crate::utils::apply_route_filters;
 
+    // This fixture contains only a synthetic, untrusted test identity.
+    fn tls_test_server(websocket: bool, status: u16) -> (u16, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let identity = native_tls::Identity::from_pkcs12(
+            include_bytes!("../tests/fixtures/untrusted-test-identity.p12"),
+            "test-only",
+        )
+        .unwrap();
+        let acceptor = native_tls::TlsAcceptor::new(identity).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let Ok(mut tls) = acceptor.accept(socket) else {
+                return;
+            };
+            if websocket && status == 200 {
+                let _ = tokio_tungstenite::tungstenite::accept(tls);
+            } else {
+                let mut request = [0; 4096];
+                if tls.read(&mut request).is_ok() {
+                    let response = format!("HTTP/1.1 {status} Test\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+                    let _ = tls.write_all(response.as_bytes());
+                }
+            }
+        });
+        (port, task)
+    }
+
+    fn tls_test_config(port: u16, insecure: bool) -> Config {
+        let mut conf: Config = serde_json::from_value(json!({
+            "company_name": "test", "username": "test", "device_id": "test-device",
+            "device_name": "Test", "server": format!("https://127.0.0.1:{port}"),
+        }))
+        .unwrap();
+        conf.insecure = insecure;
+        conf
+    }
+
+    #[tokio::test]
+    async fn https_verifies_by_default_and_insecure_preserves_http_errors() {
+        for insecure in [false, true] {
+            let (port, task) = tls_test_server(false, 200);
+            let client = Client::new(tls_test_config(port, insecure)).unwrap();
+            let result = client
+                .c
+                .get(format!("https://127.0.0.1:{port}"))
+                .send()
+                .await;
+            assert_eq!(result.is_ok(), insecure);
+            task.join().unwrap();
+        }
+        let (port, task) = tls_test_server(false, 503);
+        let client = Client::new(tls_test_config(port, true)).unwrap();
+        let error = client
+            .c
+            .get(format!("https://127.0.0.1:{port}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err();
+        assert_eq!(error.status().unwrap().as_u16(), 503);
+        task.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_verifies_by_default_and_insecure_preserves_handshake_errors() {
+        for (insecure, status, expected_ok) in
+            [(false, 200, false), (true, 200, true), (true, 503, false)]
+        {
+            let (port, task) = tls_test_server(true, status);
+            let mut client = Client::new(tls_test_config(port, insecure)).unwrap();
+            let result = client.start_vpn_push_websocket().await;
+            assert_eq!(result.is_ok(), expected_ok);
+            if status == 503 {
+                let error = format!("{:#}", result.unwrap_err());
+                assert!(error.contains("failed to connect VPN push WebSocket"));
+                assert!(error.contains("503"), "{error}");
+            }
+            task.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn insecure_cannot_be_enabled_or_persisted_in_config() {
+        let mut conf: Config = serde_json::from_value(json!({
+            "company_name": "test", "username": "test", "insecure": true,
+        }))
+        .unwrap();
+        assert!(!conf.insecure);
+        conf.insecure = true;
+        assert!(serde_json::to_value(conf)
+            .unwrap()
+            .get("insecure")
+            .is_none());
+    }
+
     #[test]
     fn hkdf_sha256_matches_rfc5869_case_1() {
         let ikm = vec![0x0b; 22];
@@ -3391,6 +3507,7 @@ mod tests {
             .insert_raw(&RawCookie::new("session", "test-session"), &server_url)
             .unwrap();
         let connector = VpnPushConnector {
+            insecure: false,
             api_url: ApiUrl::new(&conf).unwrap(),
             cookie: Arc::new(CookieStoreMutex::new(store)),
             server_url,
