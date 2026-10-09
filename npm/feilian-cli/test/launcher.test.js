@@ -24,7 +24,7 @@ test('--version reports the npm launcher version without starting native code', 
   });
 
   assert.equal(result.status, 0);
-  assert.equal(result.stdout.trim(), 'feilian-cli 1.0.8');
+  assert.equal(result.stdout.trim(), 'feilian-cli 1.0.9');
   assert.equal(result.stderr, '');
 });
 

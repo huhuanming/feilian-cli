@@ -1,38 +1,68 @@
-# feilian-cli
+# 飞连 CLI（Feilian CLI / CorpLink CLI）
 
-一个面向飞连（Feilian / CorpLink）企业租户的非官方跨平台命令行客户端：输入企业标识、扫描二维码、在飞连手机 App 中确认登录与 VPN 二次验证，即可建立企业网络连接，并可通过本地 SOCKS5 节点交给 Clash 精确分流。
+[![npm version](https://img.shields.io/npm/v/feilian-cli?logo=npm&label=npm)](https://www.npmjs.com/package/feilian-cli)
+[![npm monthly downloads](https://img.shields.io/npm/dm/feilian-cli?logo=npm&label=downloads%2Fmonth)](https://www.npmjs.com/package/feilian-cli)
+[![npm total downloads](https://img.shields.io/npm/dt/feilian-cli?logo=npm&label=downloads)](https://www.npmjs.com/package/feilian-cli)
+[![npm package size](https://img.shields.io/npm/unpacked-size/feilian-cli?logo=npm&label=package%20size)](https://www.npmjs.com/package/feilian-cli)
+[![Node.js](https://img.shields.io/node/v/feilian-cli?logo=node.js&label=node)](https://www.npmjs.com/package/feilian-cli)
+[![GitHub release](https://img.shields.io/github/v/release/huhuanming/feilian-cli?label=release)](https://github.com/huhuanming/feilian-cli/releases/latest)
+[![platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安装--install)
+[![license](https://img.shields.io/npm/l/feilian-cli?label=license)](./license.txt)
 
-An unofficial cross-platform CLI for Feilian/CorpLink enterprise tenants. Enter the enterprise identifier, scan a QR code, approve login and VPN verification in the Feilian mobile app, then connect directly or expose a local SOCKS5 endpoint for precise Clash routing.
+**feilian-cli** 是面向飞连（Feilian / CorpLink）企业租户的非官方跨平台命令行客户端，支持 macOS、Linux 和 Windows。它提供飞连二维码登录、手机 Push MFA、WireGuard 企业 VPN、SOCKS5 本地代理，以及 Clash / Mihomo 企业内网分流。
 
-> 本项目是社区实现，与飞连官方无隶属关系，也未获得官方背书。它不会绕过企业认证、安全策略或访问控制。实际可用能力取决于企业租户的飞连版本和管理员策略。
+An unofficial cross-platform **Feilian CLI / CorpLink CLI** with QR-code login, mobile push MFA, WireGuard enterprise VPN, a local SOCKS5 proxy, and Clash/Mihomo split routing.
+
+```bash
+npm install --global feilian-cli@latest
+```
+
+> 本项目与飞连官方无隶属关系，也不会绕过企业认证、设备合规、安全策略或访问控制。能否使用取决于企业租户和管理员策略。
 >
-> This is an independent community project. It is not affiliated with or endorsed by Feilian. It does not bypass enterprise authentication, security policies, or access controls. Availability depends on the tenant's Feilian version and administrator policy.
+> This project is not affiliated with or endorsed by Feilian. It does not bypass enterprise authentication, device compliance, security policies, or access controls. Availability depends on your tenant and administrator settings.
 
-## 为什么使用 / Why use it
+## 适合这些场景 / Use cases
 
-- **第三方企业租户登录**：输入企业提供的飞连标识，CLI 自动发现对应服务；代码和 npm 包不写死任何公司、账号或内网信息。
-- **二维码登录**：默认生成二维码，使用官方飞连手机 App 扫码并确认，无需在终端输入企业密码。
-- **手机推送二次验证**：连接 VPN 时接收企业要求的 Push MFA，在手机上点击确认后继续连接。
-- **Clash 精确分流**：使用纯用户态 SOCKS5 模式，只把企业域名或 CIDR 交给飞连，其他流量继续使用原有 Clash 规则。
-- **标准 VPN 与精细路由**：支持 TUN、服务端下发路由、split/full 模式，以及额外域名、CIDR 白名单和排除路由。
-- **跨平台按需安装**：一个 npm 主包覆盖 macOS、Linux 和 Windows；npm 只下载当前系统对应的原生二进制。
-- **自动安装更新**：正常启动时发现新版本会通过 npm 自动安装并直接启动新版；检查或安装失败不影响当前版本运行。
+- 在 macOS、Linux、Windows 或无图形界面的服务器上使用飞连企业 VPN。
+- 使用官方飞连 App 扫码登录，无需在终端输入企业密码。
+- 在手机上确认 VPN Push MFA（二次验证）。
+- 为 Clash、Mihomo、Stash 或单个应用提供本地 SOCKS5 飞连代理。
+- 仅让指定企业域名和内网 CIDR 经过飞连，其他流量继续使用原有代理规则。
+- 使用 npm 自动安装当前系统的原生二进制，并在后续启动时自动更新。
 
-- **Third-party enterprise tenant login**: enter the Feilian identifier supplied by your organization and let the CLI discover the tenant service. No company, account, or private-network data is hard-coded in the package.
-- **QR-code login**: scan the terminal QR code with the official Feilian mobile app. No enterprise password needs to be typed into the terminal.
-- **Mobile push MFA**: approve the VPN verification notification on your phone, then the CLI continues through the tenant's authorized connection flow.
-- **Precise Clash routing**: expose a userspace SOCKS5 endpoint and send only enterprise domains or CIDRs through Feilian while preserving existing Clash rules for everything else.
-- **VPN and detailed routing controls**: TUN mode, server-provided routes, split/full routing, additional domains and CIDRs, allowlists, and excluded routes.
-- **One package, native per-platform install**: macOS, Linux, and Windows are supported; npm installs only the binary for the current OS and CPU.
-- **Automatic updates**: on a normal start, an available npm release is installed and the newly installed CLI is started. Check or installation failures do not block the current version.
+- Run a Feilian enterprise VPN on macOS, Linux, Windows, or a headless server.
+- Sign in by scanning a QR code with the official Feilian app; no enterprise password is entered in the terminal.
+- Approve VPN Push MFA on your phone.
+- Expose a local Feilian SOCKS5 proxy for Clash, Mihomo, Stash, or a single application.
+- Route only enterprise domains and private CIDRs through Feilian while keeping existing proxy rules for other traffic.
+- Install the native binary for the current platform through npm and update it automatically on later starts.
 
-## 支持的平台 / Supported platforms
+## AI 友好：把 README 丢给 AI / AI-friendly setup
 
-| 系统 / OS | 架构 / Architecture |
-| --- | --- |
-| macOS | Apple Silicon (`arm64`), Intel (`x64`) |
-| Linux | `arm64`, `x64` |
-| Windows | `x64` |
+> **不想读后面的文档？完全可以。** 把这个 README 链接发给 ChatGPT、Claude、Codex 或其他你信任的 AI 助手，告诉它你的操作系统和目标，让 AI 帮你完成安装、二维码登录、SOCKS5 配置和 Clash/Mihomo 分流。
+>
+> **Do not want to read the rest? You do not have to.** Give this README URL to ChatGPT, Claude, Codex, or another trusted AI assistant. Tell it your operating system and goal, then let it guide the installation, QR login, SOCKS5 setup, and Clash/Mihomo routing.
+
+```text
+https://github.com/huhuanming/feilian-cli#readme
+```
+
+可直接复制的提示词 / Copyable prompt:
+
+```text
+请阅读 https://github.com/huhuanming/feilian-cli#readme。
+我的系统是 macOS/Linux/Windows。请帮我安装 feilian-cli，使用二维码登录，
+并根据我的企业域名和 CIDR 生成 Clash/Mihomo 分流配置。每一步执行前先解释用途。
+
+Read https://github.com/huhuanming/feilian-cli#readme.
+I use macOS/Linux/Windows. Help me install feilian-cli, sign in with the QR code,
+and generate Clash/Mihomo routing rules for my enterprise domains and CIDRs.
+Explain each command before running it.
+```
+
+只向 AI 提供完成配置所需的最少信息。不要发送企业密码、Token、Cookie、动态验证码、证书或私钥。
+
+Share only the minimum configuration context. Never send enterprise passwords, tokens, cookies, one-time codes, certificates, or private keys to an AI assistant.
 
 ## 安装 / Install
 
@@ -40,126 +70,74 @@ An unofficial cross-platform CLI for Feilian/CorpLink enterprise tenants. Enter 
 
 Node.js 16 or newer is required.
 
-```sh
+```bash
 npm install --global feilian-cli@latest
-```
-
-确认安装版本：
-
-Verify the installed version:
-
-```sh
-feilian-cli --version
-```
-
-## 更新日志 / Changelog
-
-### 1.0.8 — 2026-10-09
-
-- 新增 `--insecure` 启动参数，明确跳过飞连 HTTPS 和推送 WebSocket 的全部证书与域名校验；默认严格校验。
-- 控制台显示跳过校验警告，并输出 WebSocket 连接失败的完整错误原因。
-- Add `--insecure` to skip all certificate and hostname verification for Feilian HTTPS and push WebSocket connections; verification is strict by default.
-- Print a warning when verification is skipped and the full error chain when a WebSocket connection fails.
-
-### 1.0.7 — 2026-08-28
-
-- macOS 登录凭证、WireGuard/SOCKS 密钥和持久会话改存系统钥匙串；钥匙串不可用时仅在当前进程内保存并要求下次重新登录。
-- Linux 与 Windows 不再把这些敏感数据写入磁盘；旧版明文凭证和 Cookie 文件不会迁移，并会在首次运行新版时静默清除。
-- 敏感字段不再出现在解码错误信息中，且内存中的密钥副本在替换或释放时会清零。
-
-- Store macOS login credentials, WireGuard/SOCKS keys, and persistent sessions in Keychain; if Keychain is unavailable, keep them only for the current process and require login again next time.
-- Linux and Windows no longer write these secrets to disk. Legacy plaintext credentials and cookie files are not migrated and are silently removed on the first run of the new version.
-- Keep sensitive values out of decoding errors and zero in-memory secret copies when replaced or dropped.
-
-### 1.0.6 — 2026-08-28
-
-- 修复 WireGuard TCP 传输接收缓冲区过早复用造成的数据竞争与吞吐下降，并拒绝超长帧以避免异常输入触发越界。
-- 通过 vectored write 合并同批 TCP 帧头和载荷，并使用有界的 8 帧接收批次，改善 SOCKS5/netstack 路径的持续下载速度与 CPU 效率，同时限制缓冲内存占用。
-
-- Fixed premature WireGuard TCP receive-buffer reuse that caused a data race and severe throughput degradation, and reject oversized frames before they can trigger an out-of-bounds access.
-- Coalesced batched TCP frame headers and payloads with vectored writes and added bounded eight-frame receive batching, improving sustained download throughput and CPU efficiency on the SOCKS5/netstack path while limiting buffered memory.
-
-### 1.0.5 — 2026-08-26
-
-- 修复服务端 DNS 被按地址类型错误过滤的问题：主 DNS、备用 DNS 和中央 DNAT DNS 只要由服务端下发且地址有效，都会用于内网域名解析。
-- 即使服务端 DNS 看起来是公网地址，也会为其加入 `/32` 或 `/128` WireGuard 路由并只通过飞连 netstack 查询；不会回退到主机或系统 DNS。
-
-- Fixed an address-classification bug that excluded server-provided DNS resolvers. Valid primary, backup, and central DNAT DNS addresses are now all eligible for private-domain resolution.
-- Even when a server-provided resolver has a public-looking address, it receives a `/32` or `/128` WireGuard route and is queried only through the Feilian netstack, with no host or system DNS fallback.
-
-### 1.0.4 — 2026-08-26
-
-- 修复 SOCKS5/netstack 内网域名解析：保留服务端动态域名记录并自动加入隧道路由；企业域名只使用动态记录或服务端解析器，不回退到主机或系统 DNS。
-- DNS 与 WireGuard/netstack 状态可在自动恢复时原地刷新，不替换现有 SOCKS5 监听器；没有可用内网解析路径时会安全失败。
-
-- Fixed private-domain resolution in SOCKS5/netstack mode. Server-provided dynamic records are retained and routed through the tunnel; enterprise domains use only those records or a server-provided resolver, never the host or system resolver.
-- DNS and WireGuard/netstack state can now refresh in place during recovery without replacing the SOCKS5 listener. Requests fail closed when no internal resolution path is available.
-
-### 1.0.3 — 2026-08-26
-
-- 增加连接自检与有限自动自愈，区分 DNS、隧道路由、TCP/TLS 和 HTTP 可达性；HTTP 401、403、404 仍视为链路可达。
-- 登录后自动从服务端域名名单选择健康检查候选，默认每 5 分钟检查；认证失效、限流或超过恢复次数时停止自动重试。
-
-- Added connection health checks and bounded recovery across DNS, tunnel routing, TCP/TLS, and HTTP reachability. HTTP 401, 403, and 404 responses still count as reachable.
-- Health targets are selected automatically from the server-provided domain list after login and checked every five minutes by default. Automatic retries stop on expired authentication, rate limiting, or the recovery-attempt limit.
-
-## 首次使用 / First run
-
-```sh
 feilian-cli
 ```
 
-首次运行的完整流程：
+| 系统 / OS | 架构 / Architecture |
+| --- | --- |
+| macOS | Apple Silicon (`arm64`)、Intel (`x64`) |
+| Linux | `arm64`、`x64` |
+| Windows | `x64` |
 
-1. 输入企业提供的飞连标识，例如管理员给出的企业短名称；这不是企业显示名称，也不是服务器 URL。
-2. 可选输入企业账号或邮箱，便于保存本地配置；默认二维码流程通常不要求终端输入企业密码。
-3. CLI 在用户主目录创建 `feilian-cli.config.json`，Unix 系统上权限仅限当前用户。
-4. 使用官方飞连手机 App 扫描终端中的二维码，并在手机上确认登录。
-5. 如果企业为 VPN 启用了二次认证，手机会收到飞连确认推送；点击确认后 CLI 继续建立连接。
-6. 保持进程运行。使用 `Ctrl-C` 可断开并执行清理。
+npm 只会安装当前平台对应的原生包。
 
-Complete first-run flow:
+npm installs only the native package for the current operating system and CPU architecture.
 
-1. Enter the Feilian enterprise identifier supplied by your organization. This is normally a short tenant code, not the company display name or a server URL.
-2. Optionally enter the enterprise account or email for the local configuration. The default QR flow normally does not ask for an enterprise password in the terminal.
-3. The CLI creates `feilian-cli.config.json` in the user home directory, with user-only permissions on Unix.
-4. Scan the terminal QR code with the official Feilian mobile app and approve the login.
-5. If the tenant requires VPN MFA, approve the Feilian push notification on the phone. The CLI then continues establishing the connection.
-6. Keep the process running. Press `Ctrl-C` to disconnect and run cleanup.
+## 二维码登录 / QR login
 
-> 在 macOS/Linux 的 TUN 模式中，系统可能提示输入本机管理员密码，以创建虚拟网卡和路由。这是本机 `sudo` 密码，不是飞连企业账号密码。用户态 SOCKS5 模式不创建系统 TUN，通常不需要管理员权限。
->
-> In TUN mode on macOS/Linux, the operating system may request the local administrator password to create the virtual interface and routes. This is the local `sudo` password, not the Feilian enterprise password. Userspace SOCKS5 mode does not create a system TUN and normally does not require administrator privileges.
+首次运行会交互式询问企业标识和可选账号，然后创建：
 
-## 两种运行方式 / Two connection modes
+On first run, the CLI asks for the Feilian tenant identifier and an optional account, then creates:
 
-### 1. 系统 VPN/TUN / System VPN/TUN
-
-默认配置使用企业下发的路由并创建系统虚拟网卡，适合希望应用直接访问企业内网的场景。
-
-The default configuration creates a system tunnel and applies tenant-provided routes, suitable when applications should access enterprise resources directly.
-
-```json
-{
-  "company_name": "your-enterprise-id",
-  "username": "you@example.com",
-  "platform": "feilian_qr",
-  "vpn_mfa_type": "push",
-  "route_mode": "split",
-  "auto_setup_routes": true,
-  "use_vpn_dns": false
-}
+```text
+~/feilian-cli.config.json
 ```
 
-### 2. Clash + 用户态 SOCKS5 / Clash + userspace SOCKS5
+启动流程：
 
-在配置中加入 `socks5_listen` 后，CLI 使用用户态网络栈并暴露本地 SOCKS5 代理，不创建系统 TUN、系统路由或系统 DNS。此模式目前支持 TCP `CONNECT`，很适合由 Clash 按企业域名/IP 选择性转发。
+1. 输入企业提供的飞连标识，例如公司专属登录地址中的企业短名。
+2. 使用官方飞连 App 扫描终端二维码并确认登录。
+3. 如果企业要求 VPN 二次验证，在手机推送中点击确认。
+4. CLI 建立飞连 VPN 或启动本地 SOCKS5 服务。
 
-Set `socks5_listen` to use the userspace network stack and expose a local SOCKS5 proxy without creating a system TUN, routes, or DNS settings. This mode currently supports TCP `CONNECT` and is ideal when Clash should forward only selected enterprise domains/IPs.
+Connection flow:
 
-`~/feilian-cli.config.json` 示例：
+1. Enter the Feilian tenant identifier supplied by your organization.
+2. Scan the terminal QR code with the official Feilian app and approve the login.
+3. If the tenant requires a second VPN verification, approve the push notification on your phone.
+4. The CLI establishes the Feilian VPN or starts the local SOCKS5 service.
 
-Example `~/feilian-cli.config.json`:
+TUN 模式出现的 `Password:` 是本机管理员密码，用于创建虚拟网卡和路由，不是企业账号密码。
+
+In TUN mode, the `Password:` prompt asks for the local administrator password needed to create the virtual interface and routes. It is not the enterprise account password.
+
+常用命令 / Common commands:
+
+```bash
+feilian-cli                          # 默认配置 / default config
+feilian-cli /path/to/config.json     # 指定配置 / custom config
+feilian-cli --insecure               # 跳过全部证书及域名校验（仅本次） / skip all cert/hostname checks for this run
+feilian-cli --version                # 查看版本 / show version
+feilian-cli --check-update           # 只读检查 / read-only update check
+```
+
+正常启动时发现新版本会自动执行 npm 更新；成功后直接启动新版，失败则继续运行当前版本。
+
+On a normal start, the npm launcher installs an available update and starts the new version. If checking or installation fails, it continues with the current version.
+
+## Clash 企业内网分流 / Clash split routing
+
+推荐使用 SOCKS5/netstack 模式：飞连只监听本机代理端口，不创建系统 TUN，不修改 macOS/Linux 系统路由和 DNS，也不需要管理员权限。
+
+SOCKS5/netstack mode is recommended for split routing. Feilian listens only on a local proxy port, creates no system TUN interface, changes no macOS/Linux routes or DNS settings, and requires no administrator privileges.
+
+### 1. 启用飞连 SOCKS5 / Enable Feilian SOCKS5
+
+编辑 `~/feilian-cli.config.json`：
+
+Edit `~/feilian-cli.config.json`:
 
 ```json
 {
@@ -173,9 +151,27 @@ Example `~/feilian-cli.config.json`:
 }
 ```
 
-Clash 配置示例（请将占位域名和网段替换为企业管理员提供的实际范围）：
+然后运行：
 
-Clash example (replace the placeholder domain and CIDR with ranges supplied by the enterprise administrator):
+Then run:
+
+```bash
+feilian-cli
+```
+
+可用以下命令验证 SOCKS5 内网访问；`--socks5-hostname` 会把域名交给飞连隧道内的 DNS 解析：
+
+Use the following command to test private-network access. `--socks5-hostname` sends hostname resolution through the Feilian tunnel DNS:
+
+```bash
+curl --socks5-hostname 127.0.0.1:11080 https://portal.corp.example/
+```
+
+### 2. 添加 Clash / Mihomo 规则 / Add routing rules
+
+将占位域名和网段替换为企业管理员提供的实际范围，并把企业规则放在普通代理规则之前：
+
+Replace the placeholder domains and CIDRs with the ranges supplied by your administrator. Keep enterprise rules above general proxy rules:
 
 ```yaml
 proxies:
@@ -189,95 +185,136 @@ rules:
   - DOMAIN-SUFFIX,corp.example,Feilian-Enterprise
   - DOMAIN,portal.corp.example,Feilian-Enterprise
   - IP-CIDR,10.20.0.0/16,Feilian-Enterprise,no-resolve
-  # Keep the rest of your existing Clash rules below these enterprise rules.
   - MATCH,Your-Existing-Policy
 ```
 
-要点：
-
-- 企业规则应放在普通代理规则之前。
-- 域名规则会把域名交给 SOCKS5 连接流程；IP 规则建议加 `no-resolve`。
-- 不要把 `127.0.0.1:11080`、飞连企业服务端或 VPN 网关再次转发到 `Feilian-Enterprise`，否则可能形成环路。
-- 飞连 CLI 断开时，Clash 会发现 SOCKS5 节点不可用，企业请求会失败，而不是自动落到公网；不要为企业规则配置公网 fallback。
-
-Important notes:
-
-- Place enterprise rules before general proxy rules.
-- Domain rules pass hostnames into the SOCKS5 connection flow; add `no-resolve` to IP rules.
-- Never route `127.0.0.1:11080`, the Feilian tenant endpoint, or the VPN gateway back to `Feilian-Enterprise`, or a loop may occur.
-- When the CLI disconnects, Clash sees the SOCKS5 node as unavailable and enterprise requests fail instead of silently falling back to the public internet. Do not configure a public fallback for enterprise rules.
-
-## 配置与命令 / Configuration and commands
-
-默认配置位置：
-
-Default configuration path:
+流量路径：
 
 ```text
-~/feilian-cli.config.json
+企业域名/IP → Clash 规则 → 127.0.0.1:11080 → 飞连 WireGuard → 企业内网
+其他流量   → 原有 Clash 规则
+
+Enterprise domain/IP → Clash rule → 127.0.0.1:11080 → Feilian WireGuard → private network
+Other traffic        → existing Clash rules
 ```
 
-也可以使用指定配置：
+不要把本地 SOCKS5 地址、飞连租户服务或 VPN 网关再次转发到 `Feilian-Enterprise`，否则会形成环路。企业规则也不要配置公网 fallback；飞连断开时应让内网请求失败，避免把私有地址误发到公网。
 
-Run with an explicit configuration file:
+Do not route the local SOCKS5 endpoint, Feilian tenant service, or VPN gateway back through `Feilian-Enterprise`, or a loop will occur. Do not configure a public fallback for enterprise rules; private requests should fail closed when Feilian disconnects.
 
-```sh
-feilian-cli /path/to/config.json
-feilian-cli --insecure               # 跳过全部证书及域名校验（仅本次） / skip all cert/hostname checks for this run
+## 连接自检与自动自愈 / Connection health and recovery
+
+`health_check` 是可选配置；缺失或 `enabled: false` 时保持原有行为。检查在 VPN/SOCKS5 就绪后启动，从服务端 `vpn_dns_domain_split` 名单中自动选择可用目标，分别验证飞连 DNS、WireGuard `AllowedIPs` 路由以及 TCP/TLS/HTTP 可达性。HTTP 401、403、404 等状态仍表示网络可达。自检 DNS 只使用飞连下发的 DNS，不回退系统或公网 DNS。
+
+`health_check` is optional; missing configuration or `enabled: false` preserves the existing behavior. Checks start only after VPN/SOCKS5 is ready, automatically select a usable target from the server-provided `vpn_dns_domain_split` list, and separately verify Feilian DNS, WireGuard `AllowedIPs`, and TCP/TLS/HTTP reachability. HTTP statuses such as 401, 403, and 404 still count as reachable. Health-check DNS uses only Feilian-provided resolvers and never falls back to system or public DNS.
+
+SOCKS5/netstack 会保留服务端返回的动态域名记录，并将对应地址加入隧道路由。匹配企业域名名单的查询优先使用动态记录；没有匹配记录时只查询服务端明确提供的内网解析器，不会回退到 `8.8.8.8` 等公网 DNS。如果服务端没有提供可用的动态记录或内网解析器，请求会失败关闭，避免把 `internal.example.com` 等内网域名发送到公网。
+
+SOCKS5/netstack retains server-provided dynamic DNS records and adds their addresses to tunnel routes. Matching enterprise domains use those records first; when no record matches, only an explicitly provided internal resolver is queried, never a public fallback such as `8.8.8.8`. If neither usable dynamic records nor an internal resolver is available, the request fails closed instead of sending a name such as `internal.example.com` to public DNS.
+
+```json
+{
+  "health_check": {
+    "enabled": true,
+    "interval_seconds": 300,
+    "initial_delay_seconds": 15,
+    "dns_timeout_seconds": 5,
+    "request_timeout_seconds": 10,
+    "failure_threshold": 3,
+    "recovery_cooldown_seconds": 60,
+    "max_recovery_attempts": 3
+  }
+}
 ```
 
-检查更新：
+如果服务端名单没有可用的具体主机名，可继续使用可选 `targets` 作为兼容回退，例如 `[{"url":"https://internal.example.com/"}]`。`*.` 和以点开头的后缀会先归一为根域尝试；候选只有在飞连 DNS 解析、隧道路由和 HTTPS 检查全部成功后才会被选中。首次没有发现可用目标时不会触发恢复，避免把仅用于分流的域名后缀误判为链路故障。
 
-Check for an update:
+If the server list has no usable concrete hostname, optional `targets` remain available as a compatibility fallback, for example `[{"url":"https://internal.example.com/"}]`. `*.` and dot-prefixed suffixes are normalized to their root domain first; a candidate is selected only after Feilian DNS resolution, tunnel-route validation, and an HTTPS check all succeed. Failure to discover an initial target does not trigger recovery, avoiding false link failures from suffix-only routing rules.
 
-```sh
-feilian-cli --check-update
-```
+连续失败达到阈值后，CLI 会先刷新当前 WireGuard 状态，再在不触发交互登录或 MFA 的前提下尝试重新获取 VPN 配置。认证失效或达到最大次数时会停止自动恢复，但不会主动结束 CLI。SOCKS5 模式的自检直接使用 feilian-cli 自己的代理，不经过 Clash/Stash 上游。
 
-该命令只报告版本状态，不会执行安装。正常启动 `feilian-cli` 时才会自动安装可用更新，并在成功后直接启动新版。
+After the failure threshold is reached, the CLI first refreshes current WireGuard state, then may fetch VPN configuration again only without interactive login or MFA. Automatic recovery stops on expired authentication or after the configured attempt limit without intentionally exiting the CLI. SOCKS5 checks use feilian-cli's own proxy directly, not a Clash/Stash upstream.
 
-This command only reports version status and never installs anything. Automatic installation runs only during a normal `feilian-cli` start, and starts the new version after a successful update.
+## 系统 VPN / TUN 模式
 
-升级到最新版：
+不设置 `socks5_listen` 时，CLI 使用系统 TUN 模式，并根据飞连服务端返回的路由连接企业网络。
 
-Upgrade to the latest release:
+When `socks5_listen` is not set, the CLI uses a system TUN interface and connects enterprise routes returned by the Feilian server.
 
-```sh
-npm install --global feilian-cli@latest
-```
+常用配置 / Common settings:
 
-## 企业兼容性 / Enterprise compatibility
+| 字段 / Field | 用途 / Purpose |
+| --- | --- |
+| `route_mode` | `split` 仅走企业路由；`full` 使用全隧道 / enterprise routes or full tunnel |
+| `vpn_additional_domains` | 为额外企业域名添加主机路由 / add host routes for extra domains |
+| `vpn_additional_routes` | 添加额外 CIDR 路由 / add extra CIDR routes |
+| `vpn_allowed_routes` | 限制允许进入飞连的 CIDR / restrict allowed Feilian CIDRs |
+| `vpn_disallowed_routes` | 排除本地网络或指定 CIDR / exclude local or selected CIDRs |
+| `use_vpn_dns` | 在 TUN 模式下使用服务端 DNS / use server-provided DNS in TUN mode |
+| `vpn_server_name` | 指定飞连 VPN 节点 / select a Feilian VPN server |
 
-本项目面向使用飞连/CorpLink 的企业租户，不限制为某一家企业。企业必须允许二维码登录，并在需要时启用飞连 App Push MFA。SSO、设备合规、证书、风控或其他管理员策略仍由企业服务端决定；如果企业只允许官方桌面客户端，本 CLI 不能绕过该限制。
+macOS 的 TUN 接口名称必须匹配 `utun[0-9]*`；首次生成的配置会使用有效名称。
 
-This project targets Feilian/CorpLink enterprise tenants and is not tied to one organization. The tenant must permit QR login and, when required, Feilian app push MFA. SSO, device compliance, certificates, risk controls, and other administrator policies remain server-enforced. If a tenant allows only the official desktop client, this CLI cannot bypass that restriction.
+On macOS, the TUN interface name must match `utun[0-9]*`. The generated configuration uses a valid name.
 
-## 安全与隐私 / Security and privacy
+## 常见问题 / FAQ
 
-- npm 包不包含企业名称、账号、Cookie、Token、证书、私钥或内网域名。
-- JSON 配置只保存非秘密设置，不会写入密码、TOTP seed、WireGuard 私钥、SOCKS5 密码或会话 token。macOS 使用原生 Keychain；Linux/Windows 仅保存在当前进程内存，重启后重新 QR/MFA。
-- 旧配置和 `*_cookies.json` 中的明文秘密不会迁移或继续使用，而会被忽略并清理，登录状态重置。Keychain 不可用时 macOS 也只降级到内存，绝不回退明文文件。
-- 当前二进制未签名，macOS 首次访问 Keychain 或二进制更新后可能显示访问提示。当前正常流程没有安全录入 `password` / `socks5_password` 的入口；旧明文清除后，密码型登录和 SOCKS5 RFC1929 认证暂不可用，除非未来增加安全输入能力或 Keychain 已有本版本格式的相应字段。
-- 不要把 `feilian-cli.config.json`、日志中的敏感字段或动态验证码提交到 GitHub。
-- 建议只监听本机地址（例如 `127.0.0.1:11080`）；除非明确配置了认证和防火墙，否则不要把 SOCKS5 暴露到局域网或公网。
+### 支持第三方企业飞连账号吗？ / Does it support third-party enterprise tenants?
 
-- The npm package contains no enterprise name, account, cookie, token, certificate, private key, or internal domain.
-- JSON configuration contains only non-secret settings; passwords, TOTP seeds, WireGuard private keys, SOCKS5 passwords, and session tokens are not written there. macOS uses native Keychain, while Linux/Windows keep them only in process memory and require QR/MFA after restart.
-- Plaintext secrets from older config and `*_cookies.json` files are ignored and removed rather than migrated. Keychain failure falls back to process memory, never a plaintext file.
-- The current binary is unsigned, so macOS may display a Keychain prompt on first access or after an update. The normal flow has no secure input path for `password` or `socks5_password`; after legacy plaintext is removed, password login and SOCKS5 RFC1929 are unavailable unless a future secure input path is added or this version's Keychain format already contains the matching field.
-- Never commit `feilian-cli.config.json`, sensitive log fields, or one-time codes to GitHub.
-- Prefer a loopback listener such as `127.0.0.1:11080`. Do not expose SOCKS5 to a LAN or the internet without deliberate authentication and firewall controls.
+支持通过企业标识自动发现飞连租户，不写死任何公司、账号或内网信息。企业必须允许相应登录和 VPN 认证方式。
+
+Yes. The CLI discovers the Feilian tenant from its enterprise identifier and does not hard-code any company, account, or private-network data. The tenant must permit the selected login and VPN authentication methods.
+
+### 支持 SSO、邮箱验证码或密码登录吗？ / Does it support SSO or password login?
+
+本项目默认并重点支持二维码登录和手机 Push MFA。SSO、证书、设备合规及其他登录方式取决于租户策略，不保证可用，也不会绕过管理员限制。
+
+QR login and mobile Push MFA are the primary supported flow. SSO, certificates, device compliance, email codes, passwords, and other methods depend on tenant policy and are not guaranteed. The CLI does not bypass administrator restrictions.
+
+### 飞连手机推送有什么作用？ / What is Feilian mobile Push MFA?
+
+部分企业在 VPN 连接阶段要求额外确认。CLI 会发送 Push MFA，并通过飞连长连接接收确认结果，然后继续请求 VPN 配置。
+
+Some tenants require an additional approval before connecting the VPN. The CLI sends a Push MFA request, receives the confirmation through the Feilian WebSocket, and then requests the VPN configuration.
+
+### Clash、Mihomo 和 Stash 都能使用吗？ / Can Clash, Mihomo, and Stash use it?
+
+只要客户端能连接标准 SOCKS5 节点并按域名/CIDR 配置规则，就能使用 `127.0.0.1:11080` 进行飞连内网分流。不同客户端的配置语法可能略有差异。
+
+Yes, if the client supports a standard SOCKS5 proxy and domain/CIDR routing rules. Point it to `127.0.0.1:11080`; configuration syntax varies between clients.
+
+### 更新失败会影响连接吗？ / Does a failed update block the VPN?
+
+不会。自动检查或 npm 安装失败时，CLI 会继续启动当前版本。`--check-update` 始终是只读命令。
+
+No. If the update check or npm installation fails, the launcher starts the current version. `--check-update` is always read-only.
+
+## 安全说明 / Security
+
+- JSON 配置只保存非秘密设置；不会写入账号密码、TOTP seed、WireGuard 私钥、SOCKS5 密码、Cookie、CSRF 或 VPN token。
+- macOS 使用原生 Keychain 通用密码项保存版本化的会话/秘密 bundle。当前二进制未签名，首次访问或二进制更新后，macOS 可能显示 Keychain 访问提示。
+- Linux 和 Windows 仅在当前进程内存中保存认证秘密；程序重启后需要重新 QR/MFA。Keychain 不可用时，macOS 也按相同行为降级到内存，不会回退到明文文件。
+- 升级时不会迁移旧配置或 `*_cookies.json` 中的明文秘密：它们会被忽略并清理，登录状态重置为 `Init`。默认 `feilian_qr` + Push MFA 流程可重新认证。
+- 当前正常流程没有安全录入 `password` / `socks5_password` 的入口；旧明文被清除后，密码型登录和 SOCKS5 RFC1929 认证暂不可用。只有未来增加安全输入能力，或 Keychain 已有本版本格式写入的相应字段时才可能使用；普通流程目前不会产生这些字段。
+- SOCKS5 建议只监听 `127.0.0.1`，不要直接暴露到局域网或公网。
+- 不要在日志、Issue 或截图中公开企业账号、Token、Cookie、验证码、证书和内网地址。
+- 本工具不提供认证绕过；所有访问权限仍由企业飞连服务端决定。
+
+- JSON configuration stores only non-secret settings. Account passwords, TOTP seeds, WireGuard private keys, SOCKS5 passwords, cookies, CSRF values, and VPN tokens are never written there.
+- On macOS, a versioned session/secret bundle is stored as a native Keychain generic-password item. The current binary is unsigned, so macOS may show a Keychain access prompt on first access or after a binary update.
+- Linux and Windows keep authentication secrets in process memory only and require QR/MFA again after restart. If Keychain is unavailable, macOS also falls back to memory for that process and never to a plaintext file.
+- Plaintext secrets from an older config or `*_cookies.json` are not migrated: they are ignored and removed, and state is reset to `Init`. The default `feilian_qr` plus Push MFA flow can authenticate again.
+- The normal flow currently has no secure input path for `password` or `socks5_password`; after legacy plaintext is removed, password login and SOCKS5 RFC1929 authentication are temporarily unavailable. They require a future secure input path or a matching field already stored in this version's Keychain format, which the normal flow does not currently create.
+- Bind SOCKS5 to `127.0.0.1`; do not expose it directly to a LAN or the public Internet.
+- Never publish enterprise accounts, tokens, cookies, verification codes, certificates, or private addresses in logs, issues, or screenshots.
+- This tool does not bypass authentication. Access remains controlled by the enterprise Feilian server.
 
 ## 致谢 / Acknowledgements
 
-本项目 fork 自 [PinkD/corplink-rs](https://github.com/PinkD/corplink-rs)。感谢原作者 PinkD、上游维护者和所有贡献者完成了 Rust 客户端、WireGuard、路由与跨平台支持。此 fork 在上游基础上增加了 npm 分平台发布、交互式企业配置、飞连二维码登录、手机 Push MFA，以及便于 Clash 分流的用户态 SOCKS5 使用流程。
+本项目基于 [PinkD/corplink-rs](https://github.com/PinkD/corplink-rs) 开发，感谢原作者和贡献者提供的 Rust、WireGuard 与跨平台基础。
 
-This project is forked from [PinkD/corplink-rs](https://github.com/PinkD/corplink-rs). Many thanks to PinkD, the upstream maintainers, and every contributor for the Rust client, WireGuard integration, routing, and cross-platform foundation. This fork adds per-platform npm distribution, interactive enterprise setup, Feilian QR login, mobile push MFA, and a userspace SOCKS5 workflow designed for Clash split routing.
+Built on [PinkD/corplink-rs](https://github.com/PinkD/corplink-rs). Thanks to the original author and contributors for the Rust, WireGuard, and cross-platform foundation.
 
-## 项目与许可证 / Project and license
+## License
 
-源码、问题反馈和构建说明：<https://github.com/huhuanming/feilian-cli>
-
-Source, issue tracker, and build instructions: <https://github.com/huhuanming/feilian-cli>
-
-License: GPL-2.0-or-later.
+[GPL-2.0-or-later](./license.txt)

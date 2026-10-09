@@ -125,6 +125,7 @@ jobs:
       - name: Prepare npm packages
         run: |
           node npm/scripts/prepare-platform-packages.mjs release/native .npm-release
+          cp README.md npm/feilian-cli/README.md
           cp license.txt npm/feilian-cli/license.txt
       - name: Validate npm packages
         shell: bash
